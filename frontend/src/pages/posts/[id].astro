@@ -1,0 +1,251 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { supabase, parseImages, formatDate, type Post } from '../../lib/supabase';
+
+const { id } = Astro.params;
+
+if (!id) {
+  return Astro.redirect('/404');
+}
+
+const cleanId = decodeURIComponent(id || '');
+
+// First try querying by facebook_post_id
+let { data: postData, error } = await supabase
+  .from('posts')
+  .select('*')
+  .eq('facebook_post_id', cleanId)
+  .limit(1)
+  .single();
+
+if (!postData) {
+  // Try querying by id
+  const { data: dataById } = await supabase
+    .from('posts')
+    .select('*')
+    .eq('id', cleanId)
+    .limit(1)
+    .single();
+  postData = dataById;
+}
+
+if (!postData) {
+  // Try querying by temporary_id
+  const { data: dataByTemp } = await supabase
+    .from('posts')
+    .select('*')
+    .eq('temporary_id', cleanId)
+    .limit(1)
+    .single();
+  postData = dataByTemp;
+}
+
+const post: Post | null = postData || null;
+
+let images: string[] = [];
+let author = 'Unknown Author';
+let groupName = 'Facebook Group';
+let postDate = 'Unknown Date';
+let permalink = '#';
+let body = '';
+let imageCount = 0;
+
+if (post) {
+  images = parseImages(post.images, post.screenshot);
+  author = post.author || 'Unknown Author';
+  groupName = post.group_name || post.group_id || 'Facebook Group';
+  postDate = formatDate(post.post_date || post.date || post.scraped_at);
+  
+  permalink = post.permalink || '';
+  if (!permalink.startsWith('http')) {
+    if (post.facebook_post_id && post.facebook_post_id !== 'N/A') {
+      permalink = `https://www.facebook.com/${post.facebook_post_id}`;
+    } else if (post.group_url) {
+      permalink = post.group_url;
+    } else {
+      permalink = `https://www.facebook.com/groups/${post.group_id || ''}`;
+    }
+  }
+
+  body = post.body || 'No description available for this post.';
+  imageCount = images.length;
+}
+---
+
+<Layout title={post ? `${author} - Post Details | FB Data Inspector` : 'Post Not Found | FB Data Inspector'}>
+  <div class="mb-6">
+    <a href="/" class="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors">
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+      </svg>
+      <span>Back to all posts</span>
+    </a>
+  </div>
+
+  {!post ? (
+    <div class="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-sm max-w-2xl mx-auto my-12">
+      <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        </svg>
+      </div>
+      <h2 class="mt-4 text-2xl font-bold text-slate-900">Post Not Found (404)</h2>
+      <p class="mt-2 text-sm text-slate-500 max-w-md mx-auto">
+        The requested post with ID <code class="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-mono">{id}</code> could not be found in the Supabase database. It may have been removed or the ID is incorrect.
+      </p>
+      <div class="mt-8">
+        <a href="/" class="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white hover:bg-slate-800 transition-colors shadow-sm">
+          <span>Browse All Scraped Posts</span>
+        </a>
+      </div>
+    </div>
+  ) : (
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <!-- Left Column: Image Gallery -->
+      <div class="lg:col-span-7 space-y-4">
+        <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm aspect-video relative">
+          {images.length > 0 ? (
+            <img 
+              id="main-gallery-image" 
+              src={images[0]} 
+              alt="Full post gallery display" 
+              class="h-full w-full object-cover object-center transition-all duration-300"
+            />
+          ) : (
+            <div class="flex h-full w-full items-center justify-center text-slate-400 bg-slate-100">
+              <svg class="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+              </svg>
+            </div>
+          )}
+          {imageCount > 0 && (
+            <div class="absolute bottom-3 right-3 rounded-lg bg-black/75 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-sm">
+              {imageCount} {imageCount === 1 ? 'Image' : 'Images'}
+            </div>
+          )}
+        </div>
+
+        {images.length > 1 && (
+          <div class="grid grid-cols-4 sm:grid-cols-6 gap-3">
+            {images.map((img: string, idx: number) => (
+              <button 
+                type="button" 
+                class={`gallery-thumbnail cursor-pointer overflow-hidden rounded-lg border-2 transition-all aspect-video bg-slate-100 ${idx === 0 ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-slate-200 hover:border-slate-300'}`}
+                data-image={img}
+              >
+                <img src={img} alt={`Thumbnail ${idx + 1}`} loading="lazy" class="h-full w-full object-cover object-center" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <!-- Right Column: Details & Metadata -->
+      <div class="lg:col-span-5 flex flex-col space-y-6">
+        <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm flex-1 flex flex-col">
+          <div class="flex items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div>
+              <h2 class="font-bold text-slate-900 text-lg">{author}</h2>
+              <p class="text-xs text-slate-500 mt-0.5">Created: {postDate}</p>
+            </div>
+            <span class="inline-flex items-center rounded-lg bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 border border-blue-200/60">
+              {groupName}
+            </span>
+          </div>
+
+          <!-- Description -->
+          <div class="mt-6 flex-1">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Full Post Text</h3>
+            <p class="text-slate-700 text-sm leading-relaxed whitespace-pre-line">
+              {body}
+            </p>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-6">
+            <a 
+              href={permalink} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              class="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-500 transition-colors shadow-sm text-center"
+            >
+              <span>Open on Facebook</span>
+              <svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
+
+            <button 
+              type="button" 
+              id="copy-url-btn" 
+              data-url={permalink} 
+              class="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-200 transition-colors shadow-sm text-center cursor-pointer"
+            >
+              <svg id="copy-icon-default" class="h-4 w-4 flex-shrink-0 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              <svg id="copy-icon-success" class="h-4 w-4 flex-shrink-0 text-emerald-600 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <span id="copy-text">Copy URL</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )}
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      // Gallery thumbnail click handler
+      const mainImg = document.getElementById("main-gallery-image") as HTMLImageElement;
+      const thumbnails = document.querySelectorAll(".gallery-thumbnail");
+
+      thumbnails.forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          const target = e.currentTarget as HTMLElement;
+          const newSrc = target.getAttribute("data-image");
+          if (mainImg && newSrc) {
+            mainImg.src = newSrc;
+            thumbnails.forEach((t) => {
+              t.classList.remove("border-blue-600", "ring-2", "ring-blue-600/20");
+              t.classList.add("border-slate-200");
+            });
+            target.classList.remove("border-slate-200");
+            target.classList.add("border-blue-600", "ring-2", "ring-blue-600/20");
+          }
+        });
+      });
+
+      // Copy URL button handler
+      const copyBtn = document.getElementById("copy-url-btn");
+      const copyText = document.getElementById("copy-text");
+      const iconDefault = document.getElementById("copy-icon-default");
+      const iconSuccess = document.getElementById("copy-icon-success");
+
+      if (copyBtn && copyText && iconDefault && iconSuccess) {
+        copyBtn.addEventListener("click", async () => {
+          const url = copyBtn.getAttribute("data-url") || "";
+          try {
+            await navigator.clipboard.writeText(url);
+            copyText.textContent = "Copied!";
+            iconDefault.classList.add("hidden");
+            iconSuccess.classList.remove("hidden");
+            copyBtn.classList.remove("bg-slate-100", "text-slate-700");
+            copyBtn.classList.add("bg-emerald-50", "text-emerald-700", "border", "border-emerald-200");
+
+            setTimeout(() => {
+              copyText.textContent = "Copy URL";
+              iconDefault.classList.remove("hidden");
+              iconSuccess.classList.add("hidden");
+              copyBtn.classList.remove("bg-emerald-50", "text-emerald-700", "border", "border-emerald-200");
+              copyBtn.classList.add("bg-slate-100", "text-slate-700");
+            }, 2000);
+          } catch (err) {
+            console.error("Failed to copy URL:", err);
+          }
+        });
+      }
+    });
+  </script>
+</Layout>
