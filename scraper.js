@@ -40,12 +40,7 @@ const SESSION_FILE = path.join(__dirname, "facebook-session.json");
 const JSON_FILE = path.join(__dirname, "posts.json");
 const CSV_FILE = path.join(__dirname, "posts.csv");
 const STATUS_FILE = path.join(__dirname, "status.json");
-const IMAGES_DIR = path.join(__dirname, "images");
 const MAX_SCROLL_COUNT = 25;
-
-if (!fs.existsSync(IMAGES_DIR)) {
-    fs.mkdirSync(IMAGES_DIR);
-}
 
 // Global browser state to keep browser alive across scheduled runs
 let browser = null;
@@ -80,27 +75,25 @@ function updateHealthStatus(updates) {
     } catch (err) { }
 }
 
-// Helper function to download images
-function download(url, filename) {
+// Helper function to download images into memory
+function downloadToBuffer(url) {
     return new Promise((resolve) => {
         const client = url.startsWith("https") ? https : http;
         client.get(url, res => {
             if (res.statusCode !== 200) {
                 res.resume();
-                return resolve(false);
+                return resolve(null);
             }
-            const file = fs.createWriteStream(filename);
-            res.pipe(file);
-            file.on("finish", () => {
-                file.close();
-                resolve(true);
+            const data = [];
+            res.on('data', chunk => data.push(chunk));
+            res.on('end', () => {
+                resolve(Buffer.concat(data));
             });
-            file.on("error", () => {
-                file.close();
-                resolve(false);
+            res.on('error', () => {
+                resolve(null);
             });
         }).on("error", () => {
-            resolve(false);
+            resolve(null);
         });
     });
 }
@@ -256,14 +249,162 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 continue; // Do not increment duplicateCount for non-post items
             }
 
-            const seeMore = feedUnit.locator('div[role="button"]:has-text("See more")').first();
-            if (await seeMore.count().catch(() => 0)) {
-                await seeMore.click().catch(() => { });
-                await targetPage.waitForTimeout(400).catch(() => { });
+            // --- INDEPENDENT EXTRACTORS ---
+            const extractFeedBody = async (unit) => {
+                return await unit.evaluate((el) => {
+                    let bodyText = "";
+                    let selectorMatched = false;
+                    
+                    const textBlocks = Array.from(el.querySelectorAll('div[dir="auto"]'));
+                    if (textBlocks.length > 0) selectorMatched = true;
+                    
+                    const seenTexts = new Set();
+                    let paragraphs = [];
+                    
+                    for (const block of textBlocks) {
+                        const txt = (block.innerText || "").trim();
+                        if (!txt) continue;
+                        
+                        if (/^(Like|Comment|Share|Send|Reply|Most Relevant|Write a comment|Suggested for you|Sponsored|See translation|Rate this translation|Most Recent|New Activity)$/i.test(txt)) {
+                            break;
+                        }
+                        
+                        if (/^(See less|See more|Continue reading|\.\.\. More|… More)$/i.test(txt)) {
+                            continue;
+                        }
+
+                        if (!seenTexts.has(txt)) {
+                            seenTexts.add(txt);
+                            paragraphs.push(txt);
+                        }
+                    }
+                    
+                    bodyText = paragraphs.join('\n');
+                    
+                    const cleanUpRe = /(?:\s+|^)(?:See more|See less|… More|\.\.\. More|\.\.\. See more|Continue reading|See translation|Rate this translation|Like|Comment|Share|Send|Reply|Most Relevant|Most Recent|New Activity|Suggested for you|Sponsored|Write a comment)\s*$/gim;
+                    let oldText;
+                    do {
+                        oldText = bodyText;
+                        bodyText = bodyText.replace(cleanUpRe, '').trim();
+                    } while (oldText !== bodyText);
+
+                    return { bodyText: bodyText.trim(), selectorMatched };
+                }).catch(() => ({ bodyText: "", selectorMatched: false }));
+            };
+
+            const extractPermalinkBody = async (page) => {
+                return await page.evaluate(() => {
+                    let bodyText = "";
+                    const container = document.querySelector('div[role="main"]') || document.querySelector('article') || document.body;
+                    
+                    const textBlocks = Array.from(container.querySelectorAll('div[dir="auto"]'));
+                    
+                    const seenTexts = new Set();
+                    let paragraphs = [];
+                    
+                    for (const block of textBlocks) {
+                        const txt = (block.innerText || "").trim();
+                        if (!txt) continue;
+                        
+                        if (/^(Like|Comment|Share|Send|Reply|Most Relevant|Write a comment|Suggested for you|Sponsored|See translation|Rate this translation|Most Recent|New Activity)$/i.test(txt)) {
+                            break;
+                        }
+                        
+                        if (/^(See less|See more|Continue reading|\.\.\. More|… More)$/i.test(txt)) {
+                            continue;
+                        }
+
+                        if (!seenTexts.has(txt)) {
+                            seenTexts.add(txt);
+                            paragraphs.push(txt);
+                        }
+                    }
+                    
+                    bodyText = paragraphs.join('\n');
+                    
+                    const cleanUpRe = /(?:\s+|^)(?:See more|See less|… More|\.\.\. More|\.\.\. See more|Continue reading|See translation|Rate this translation|Like|Comment|Share|Send|Reply|Most Relevant|Most Recent|New Activity|Suggested for you|Sponsored|Write a comment)\s*$/gim;
+                    let oldText;
+                    do {
+                        oldText = bodyText;
+                        bodyText = bodyText.replace(cleanUpRe, '').trim();
+                    } while (oldText !== bodyText);
+
+                    return bodyText.trim();
+                }).catch(() => "");
+            };
+
+            console.log("\n----------------------------------------");
+            console.log("Found feed card\n");
+            
+            let { bodyText: previewBody, selectorMatched } = await extractFeedBody(feedUnit);
+            
+            if (!selectorMatched || previewBody.length === 0) {
+                console.log("WARNING:\nOriginal body selector returned empty string.\nSkipping expansion.");
+                console.log("Skipped card:\nNo body extracted.");
+                console.log("----------------------------------------\n");
+                processedIndex = i + 1;
+                continue;
+            }
+
+            let finalBody = previewBody;
+            let expandedBody = previewBody;
+            let feedTruncatedInit = previewBody.endsWith("...") || 
+                                previewBody.endsWith("…") || 
+                                previewBody.match(/\.\.\.\s*$/) || 
+                                previewBody.match(/…\s*$/) ||
+                                previewBody.includes("See more") ||
+                                previewBody.includes("Continue reading") ||
+                                (previewBody.length > 50 && !previewBody.match(/[.!?]$/) && previewBody.length < 250);
+
+            if (feedTruncatedInit) {
+                let clickSuccess = await feedUnit.evaluate(async (el) => {
+                    const clickables = Array.from(el.querySelectorAll('div[role="button"], span[role="button"], button, a, div, span'));
+                    let clicked = false;
+                    for (const c of clickables) {
+                        const txt = (c.innerText || "").trim().toLowerCase();
+                        if (/^(see more|more|read more|continue reading|\.\.\. more|… more)$/i.test(txt)) {
+                            const style = window.getComputedStyle(c);
+                            if (style.display !== 'none' && style.visibility !== 'hidden' && c.offsetWidth > 0 && c.offsetHeight > 0) {
+                                try {
+                                    c.click();
+                                    clicked = true;
+                                } catch(e) {}
+                            }
+                        }
+                    }
+                    if (clicked) {
+                        return new Promise((resolve) => {
+                            let observerTriggered = false;
+                            const observer = new MutationObserver(() => { observerTriggered = true; });
+                            observer.observe(el, { childList: true, subtree: true, characterData: true });
+                            
+                            let timePassed = 0;
+                            const interval = setInterval(() => {
+                                timePassed += 100;
+                                if (observerTriggered || timePassed >= 2500) {
+                                    clearInterval(interval);
+                                    observer.disconnect();
+                                    resolve(true);
+                                }
+                            }, 100);
+                        });
+                    }
+                    return false;
+                }).catch(() => false);
+                
+                if (clickSuccess) {
+                    await targetPage.waitForTimeout(500);
+                    const extracted = await extractFeedBody(feedUnit);
+                    expandedBody = extracted.bodyText;
+                    
+                    if (expandedBody.length > previewBody.length) {
+                        finalBody = expandedBody;
+                    }
+                }
             }
 
             // 1. Extract metadata & permalink
-            let data = await feedUnit.evaluate((el) => {
+            let data = await feedUnit.evaluate((el, { passedBody }) => {
                 let permalinkObj = null;
                 let bestUrl = null;
                 let bestTimestamp = "Today";
@@ -298,23 +439,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     permalinkObj = { url: bestUrl, timestamp: bestTimestamp };
                 }
 
-                const messageEl = el.querySelector('[data-ad-comet-preview="message"], [data-ad-preview="message"]');
-                let bodyText = "";
-                if (messageEl && messageEl.innerText.trim()) {
-                    bodyText = messageEl.innerText.replace(/See translation\n?/g, '').trim();
-                } else {
-                    const textBlocks = Array.from(el.querySelectorAll('div[dir="auto"]'));
-                    for (const block of textBlocks) {
-                        const txt = block.innerText || "";
-                        if (txt.includes("Like") || txt.includes("Reply") || txt.includes("Share") || txt.includes("Comment") || txt.includes("Send") || txt.includes("Write a comment")) {
-                            break;
-                        }
-                        if (!txt.includes("See translation") && txt.length > 3) {
-                            bodyText += txt + "\n";
-                        }
-                    }
-                    bodyText = bodyText.trim();
-                }
+                let bodyText = passedBody;
 
                 let rawAuthor = "Unknown Author";
                 const candidates = Array.from(el.querySelectorAll('h2, h3, h4, strong, a[href*="/user/"], a[href*="/profile.php"]'));
@@ -403,7 +528,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 }
 
                 return { permalinkObj, bodyText, author, likes, comments, shares, video, images };
-            }).catch(() => null);
+            }, { passedBody: finalBody }).catch(() => null);
 
             if (!data) {
                 console.log("Skipped");
@@ -798,6 +923,55 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 console.log("Today's post");
             }
 
+            // --- STAGE 2 FALLBACK (CRITICAL) ---
+            let needsFallback = false;
+            
+            if (finalBody.endsWith("...")) needsFallback = true;
+            if (finalBody.endsWith("…")) needsFallback = true;
+            if (finalBody.includes("See more")) needsFallback = true;
+            if (finalBody.includes("Continue reading")) needsFallback = true;
+            if (finalBody.length < 50 && finalBody.endsWith("…")) needsFallback = true;
+            if (feedTruncatedInit && finalBody.length <= previewBody.length) needsFallback = true;
+            
+            let permalinkBodyText = "";
+            let expansionSource = "Feed";
+            let reason = "Already complete";
+
+            if (needsFallback) {
+                reason = "Fallback";
+            } else if (feedTruncatedInit && finalBody.length > previewBody.length) {
+                reason = "Expanded";
+            }
+            
+            if (needsFallback && permalink && permalink.startsWith("http")) {
+                try {
+                    const fallbackPage = await browser.newPage();
+                    await fallbackPage.goto(permalink, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+                    await fallbackPage.waitForTimeout(3000).catch(() => {});
+                    
+                    permalinkBodyText = await extractPermalinkBody(fallbackPage);
+                    
+                    if (permalinkBodyText && permalinkBodyText.length > finalBody.length) {
+                        finalBody = permalinkBodyText;
+                        expansionSource = "Permalink";
+                        reason = "Fallback";
+                    }
+                    
+                    await fallbackPage.close().catch(() => {});
+                } catch (e) {
+                }
+            }
+            
+            data.bodyText = finalBody;
+
+            console.log(`Feed preview length: ${previewBody.length}`);
+            console.log(`Feed expanded length: ${expandedBody.length}`);
+            console.log(`Permalink length: ${permalinkBodyText.length || 0}`);
+            console.log(`Final saved length: ${finalBody.length}`);
+            console.log(`Expansion source: ${expansionSource}`);
+            console.log(`Reason: ${reason}`);
+            console.log("----------------------------------------\n");
+
             // 4. Generate temporary_id using stable normalized author, body, and images
             const normalizedAuthor = (data.author || "Unknown Author").toLowerCase()
                 .replace(/\b(follow|following|admin|moderator|group expert|top contributor|facebook|suggested|sponsored)\b/g, '')
@@ -924,55 +1098,54 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             await feedUnit.scrollIntoViewIfNeeded().catch(() => { });
             await targetPage.waitForTimeout(1000).catch(() => { });
 
-            // Compress screenshots before upload to reduce storage
-            const localScreenshotPath = path.join(IMAGES_DIR, `post_${groupId}_${Date.now()}.jpg`);
-            await feedUnit.screenshot({ path: localScreenshotPath, type: 'jpeg', quality: 50 }).catch(() => { });
-
-            let screenshotUrl = `images/${path.basename(localScreenshotPath)}`;
             const uploadedStoragePaths = [];
-            const localFilesToClean = [];
             let uploadedCount = 0;
-
-            if (fs.existsSync(localScreenshotPath)) {
-                localFilesToClean.push(localScreenshotPath);
-                const uploadRes = await uploadImageToSupabase(localScreenshotPath, `post_images/${path.basename(localScreenshotPath)}`, 'image/jpeg');
-                if (uploadRes && uploadRes.publicUrl) {
-                    screenshotUrl = uploadRes.publicUrl;
-                    uploadedStoragePaths.push(uploadRes.storagePath);
-                    uploadedCount++;
-                    updateHealthStatus({ storage_uploads: healthStatus.storage_uploads + 1 });
-                }
-            }
 
             const imageUrls = [];
             for (let j = 0; j < data.images.length; j++) {
                 const imgFilename = `post_${groupId}_${Date.now()}_${j + 1}.jpg`;
-                const localImgPath = path.join(IMAGES_DIR, imgFilename);
-                const dlSuccess = await download(data.images[j], localImgPath);
-                if (dlSuccess && fs.existsSync(localImgPath)) {
-                    localFilesToClean.push(localImgPath);
-                    const imgUploadRes = await uploadImageToSupabase(localImgPath, `post_images/${imgFilename}`, 'image/jpeg');
+                const imgBuffer = await downloadToBuffer(data.images[j]);
+                if (imgBuffer) {
+                    const imgUploadRes = await uploadImageToSupabase(imgBuffer, `post_images/${imgFilename}`, 'image/jpeg');
                     if (imgUploadRes && imgUploadRes.publicUrl) {
                         imageUrls.push(imgUploadRes.publicUrl);
                         uploadedStoragePaths.push(imgUploadRes.storagePath);
                         uploadedCount++;
                         updateHealthStatus({ storage_uploads: healthStatus.storage_uploads + 1 });
-                    } else {
-                        imageUrls.push(`images/${imgFilename}`);
                     }
                 }
             }
 
             if (uploadedCount > 0) {
-                console.log(`Uploaded ${uploadedCount} images`);
+                console.log(`Uploaded ${uploadedCount} images from memory`);
             }
 
-            // Clean local files immediately after uploading
-            for (const f of localFilesToClean) {
-                if (fs.existsSync(f)) {
-                    fs.unlinkSync(f);
+            // Final cleanup of Facebook UI labels before saving
+            const cleanFacebookBody = (text) => {
+                const garbageList = [
+                    "See less", "See more", "Continue reading", "Like", "Comment", "Reply", 
+                    "Share", "Send", "Most Relevant", "Most recent", "View more comments", 
+                    "Write a comment", "Sponsored", "Suggested for you", "New activity", "See translation"
+                ];
+                let groupNamePattern = "";
+                if (group.name) {
+                    groupNamePattern = `|${group.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`;
                 }
-            }
+                const cleanupRegex = new RegExp(`(?:^|\\n)(?:${garbageList.join("|")}${groupNamePattern})\\s*$`, "gi");
+                const cleanupRegexStart = new RegExp(`^(?:${garbageList.join("|")}${groupNamePattern})\\s*\\n?`, "gi");
+
+                let cleaned = text;
+                let previous = "";
+                while (cleaned !== previous) {
+                    previous = cleaned;
+                    cleaned = cleaned.replace(cleanupRegex, "").trim();
+                    cleaned = cleaned.replace(cleanupRegexStart, "").trim();
+                }
+                
+                return cleaned;
+            };
+            
+            data.bodyText = cleanFacebookBody(data.bodyText || "");
 
             const postObj = {
                 id: permalink,
@@ -986,7 +1159,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 likes: data.likes || 0,
                 comments: data.comments || 0,
                 shares: data.shares || 0,
-                screenshot: screenshotUrl,
+                screenshot: null,
                 images: imageUrls,
                 scraped_at: new Date().toISOString(),
                 temporary_id: temporaryId,

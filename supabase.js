@@ -20,7 +20,7 @@ function normalizeFacebookPostId(url) {
     if (!url) return null;
     try {
         const parsed = new URL(url, "https://www.facebook.com");
-        
+
         if (parsed.searchParams.has("multi_permalinks")) {
             return parsed.searchParams.get("multi_permalinks");
         }
@@ -75,7 +75,7 @@ async function getExistingPermalinksForGroup(groupUrl, groupName, groupId) {
                     if (!fbId && row.permalink) {
                         fbId = normalizeFacebookPostId(row.permalink);
                         if (fbId) {
-                            await supabase.from("posts").update({ facebook_post_id: fbId }).eq("id", row.id).catch(() => {});
+                            await supabase.from("posts").update({ facebook_post_id: fbId }).eq("id", row.id).catch(() => { });
                         }
                     }
                     if (!fbId && row.id) {
@@ -104,13 +104,12 @@ async function getExistingPermalinksForGroup(groupUrl, groupName, groupId) {
 }
 
 /**
- * Upload a local image to Supabase Storage 'images' bucket.
+ * Upload an image buffer to Supabase Storage 'images' bucket.
  */
-async function uploadImageToSupabase(localPath, storagePath, contentType = 'image/jpeg') {
+async function uploadImageToSupabase(fileBuffer, storagePath, contentType = 'image/jpeg') {
     if (!supabase) return null;
     try {
-        if (!fs.existsSync(localPath)) return null;
-        const fileBuffer = fs.readFileSync(localPath);
+        if (!fileBuffer) return null;
 
         const { data, error } = await supabase.storage
             .from("images")

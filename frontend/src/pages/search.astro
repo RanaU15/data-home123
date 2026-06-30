@@ -12,180 +12,295 @@ const { data: posts, error } = await supabase
 
 const validPosts = (!error && posts) ? posts : [];
 
-// Extract unique group names for the filter dropdown
-const groups = Array.from(new Set(validPosts.map((p: Post) => p.group_name || p.group_id || 'Facebook Group'))).filter(Boolean);
+// Common areas in Ahmedabad with their rough coordinates
+const AHMEDABAD_AREAS = [
+  { name: 'Navrangpura', lat: 23.0366, lng: 72.5611 },
+  { name: 'Bopal', lat: 23.0333, lng: 72.4630 },
+  { name: 'Satellite', lat: 23.0270, lng: 72.5250 },
+  { name: 'Prahlad Nagar', lat: 23.0116, lng: 72.5065 },
+  { name: 'Thaltej', lat: 23.0500, lng: 72.5020 },
+  { name: 'Bodakdev', lat: 23.0384, lng: 72.5118 },
+  { name: 'Vastrapur', lat: 23.0350, lng: 72.5293 },
+  { name: 'Gota', lat: 23.0903, lng: 72.5401 },
+  { name: 'Chandkheda', lat: 23.1093, lng: 72.5849 },
+  { name: 'Maninagar', lat: 22.9972, lng: 72.6019 },
+  { name: 'Paldi', lat: 23.0120, lng: 72.5629 },
+  { name: 'Ellisbridge', lat: 23.0253, lng: 72.5714 },
+  { name: 'SG Highway', lat: 23.0487, lng: 72.5152 },
+  { name: 'Ghatlodia', lat: 23.0768, lng: 72.5401 },
+  { name: 'Naranpura', lat: 23.0526, lng: 72.5467 },
+  { name: 'Vejalpur', lat: 23.0063, lng: 72.5164 },
+  { name: 'Shilaj', lat: 23.0544, lng: 72.4630 },
+  { name: 'Science City', lat: 23.0784, lng: 72.4975 },
+  { name: 'Makarba', lat: 22.9982, lng: 72.5002 },
+  { name: 'Sabarmati', lat: 23.0841, lng: 72.5857 }
+];
+
+// Calculate posts per area for the map
+const areaStats = AHMEDABAD_AREAS.map(area => {
+  const count = validPosts.filter((p: Post) => {
+    const body = (p.body || '').toLowerCase();
+    return body.includes(area.name.toLowerCase());
+  }).length;
+  
+  return { ...area, count };
+}).filter(area => area.count > 0);
+
 ---
 
 <Layout title="Search & Filter Posts | FB Data Inspector">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" slot="head" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" slot="head"></script>
+
   <div class="mb-8 border-b border-slate-200 pb-5">
     <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Search & Filter Posts</h1>
-    <p class="mt-1 text-sm text-slate-500">Quickly find specific scraped posts by author name, description content, or Facebook group.</p>
+    <p class="mt-1 text-sm text-slate-500">Quickly find specific real estate posts by location, budget, and property type.</p>
   </div>
 
-  <!-- Search & Filter Controls Bar -->
-  <div class="mb-8 grid grid-cols-1 md:grid-cols-3 gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-    <div>
-      <label for="search-desc" class="block text-xs font-semibold text-slate-700 mb-1.5">Search by Description</label>
-      <div class="relative">
-        <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
-          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </span>
-        <input 
-          type="text" 
-          id="search-desc" 
-          placeholder="Keywords in description..." 
-          class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none transition-all"
-        />
-      </div>
-    </div>
-
-    <div>
-      <label for="search-author" class="block text-xs font-semibold text-slate-700 mb-1.5">Search by Author</label>
-      <div class="relative">
-        <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
-          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-          </svg>
-        </span>
-        <input 
-          type="text" 
-          id="search-author" 
-          placeholder="Author name..." 
-          class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none transition-all"
-        />
-      </div>
-    </div>
-
-    <div>
-      <label for="filter-group" class="block text-xs font-semibold text-slate-700 mb-1.5">Filter by Facebook Group</label>
-      <select 
-        id="filter-group" 
-        class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm text-slate-900 focus:border-blue-600 focus:bg-white focus:outline-none transition-all"
-      >
-        <option value="">All Groups</option>
-        {groups.map((g: string) => (
-          <option value={g}>{g}</option>
-        ))}
-      </select>
-    </div>
-  </div>
-
-  <!-- Skeleton Loader (Shown during search/filtering transitions) -->
-  <div id="search-skeleton" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 hidden">
-    <SkeletonCard />
-    <SkeletonCard />
-    <SkeletonCard />
-    <SkeletonCard />
-    <SkeletonCard />
-    <SkeletonCard />
-    <SkeletonCard />
-    <SkeletonCard />
-  </div>
-
-  <!-- Search Results Container -->
-  <div id="results-container">
-    <div id="results-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-      {validPosts.map((post: Post) => (
-        <div 
-          class="post-filter-wrapper" 
-          data-author={(post.author || '').toLowerCase()} 
-          data-body={(post.body || '').toLowerCase()} 
-          data-group={post.group_name || post.group_id || 'Facebook Group'}
-        >
-          <PostCard post={post} />
-        </div>
-      ))}
-    </div>
-
-    <!-- Pagination Controls -->
-    <div id="pagination-wrapper" class="mt-12 flex items-center justify-between border-t border-slate-200 pt-6">
-      <div class="flex flex-1 items-center justify-between sm:hidden">
-        <button 
-          type="button" 
-          id="prev-page-mobile" 
-          class="relative inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
-        >
-          Previous
-        </button>
-        <button 
-          type="button" 
-          id="next-page-mobile" 
-          class="relative ml-3 inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
-        >
-          Next
-        </button>
-      </div>
-      <div class="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
-        <div>
-          <p class="text-sm text-slate-700">
-            Showing <span id="page-from" class="font-medium">1</span> to <span id="page-to" class="font-medium">20</span> of <span id="page-total" class="font-medium">0</span> results
-          </p>
-        </div>
-        <div>
-          <nav class="inline-flex items-center gap-2" aria-label="Pagination">
-            <button 
-              type="button" 
-              id="prev-page-btn" 
-              class="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
-            >
+  <div class="flex flex-col lg:flex-row gap-8">
+    <!-- Left Sidebar Filters -->
+    <aside class="w-full lg:w-72 flex-shrink-0">
+      <div class="sticky top-24 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <h2 class="text-lg font-bold text-slate-900 mb-4 border-b border-slate-100 pb-3">Filters</h2>
+        
+        <!-- Location Filter -->
+        <div class="mb-5">
+          <label for="filter-location" class="block text-sm font-semibold text-slate-700 mb-2">Location</label>
+          <div class="relative">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
               <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
-              <span>Previous</span>
-            </button>
-
-            <span id="page-indicator" class="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 rounded-xl">
-              Page 1 of 1
             </span>
+            <input 
+              type="text" 
+              id="filter-location" 
+              placeholder="e.g. Bopal, Satellite..." 
+              class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none transition-all"
+            />
+          </div>
+        </div>
 
+        <!-- Budget Filter -->
+        <div class="mb-5">
+          <label for="filter-budget" class="block text-sm font-semibold text-slate-700 mb-2">Max Budget</label>
+          <div class="relative">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </span>
+            <input 
+              type="number" 
+              id="filter-budget" 
+              placeholder="Max amount..." 
+              class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none transition-all"
+            />
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1">Filters posts mentioning numbers &le; budget</p>
+        </div>
+
+        <!-- Property Type Filter -->
+        <div class="mb-5">
+          <label class="block text-sm font-semibold text-slate-700 mb-3">Property Type</label>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="1bhk" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">1 BHK</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="2bhk" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">2 BHK</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="3bhk" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">3 BHK</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="4bhk" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">4 BHK</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="boyspg" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">Boys PG</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="girlspg" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">Girls PG</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Preferred Tenant Filter -->
+        <div class="mb-5">
+          <label class="block text-sm font-semibold text-slate-700 mb-3">Preferred Tenant</label>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="bacelor" class="filter-tenant h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">Bachelors</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="families" class="filter-tenant h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">Families</span>
+            </label>
+          </div>
+        </div>
+
+        <button 
+          type="button" 
+          id="reset-filters-btn-sidebar" 
+          class="w-full mt-2 inline-flex justify-center items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm cursor-pointer"
+        >
+          Reset Filters
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 min-w-0">
+
+      <!-- Map Container -->
+      <div class="mb-8 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm relative">
+        <div class="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm border border-slate-200 pointer-events-none">
+          <p class="text-xs font-semibold text-slate-700">Click a map pin to filter posts</p>
+        </div>
+        <div id="map" class="w-full h-[350px] rounded-xl z-0"></div>
+      </div>
+
+      <!-- Store data in a script tag to access in client-side JS -->
+      <script id="map-data" type="application/json" set:html={JSON.stringify(areaStats)}></script>
+
+      <!-- Skeleton Loader (Shown during search/filtering transitions) -->
+      <div id="search-skeleton" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 hidden">
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+
+      <!-- Search Results Container -->
+      <div id="results-container">
+        <div id="results-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          {validPosts.map((post: Post) => (
+            <div 
+              class="post-filter-wrapper" 
+              data-body={(post.body || '').toLowerCase()} 
+            >
+              <PostCard post={post} />
+            </div>
+          ))}
+        </div>
+
+        <!-- Pagination Controls -->
+        <div id="pagination-wrapper" class="mt-12 flex items-center justify-between border-t border-slate-200 pt-6">
+          <div class="flex flex-1 items-center justify-between sm:hidden">
             <button 
               type="button" 
-              id="next-page-btn" 
-              class="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
+              id="prev-page-mobile" 
+              class="relative inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
             >
-              <span>Next</span>
-              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
+              Previous
             </button>
-          </nav>
+            <button 
+              type="button" 
+              id="next-page-mobile" 
+              class="relative ml-3 inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
+            >
+              Next
+            </button>
+          </div>
+          <div class="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+            <div>
+              <p class="text-sm text-slate-700">
+                Showing <span id="page-from" class="font-medium">1</span> to <span id="page-to" class="font-medium">20</span> of <span id="page-total" class="font-medium">0</span> results
+              </p>
+            </div>
+            <div>
+              <nav class="inline-flex items-center gap-2" aria-label="Pagination">
+                <button 
+                  type="button" 
+                  id="prev-page-btn" 
+                  class="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
+                >
+                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                  <span>Previous</span>
+                </button>
+
+                <span id="page-indicator" class="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 rounded-xl">
+                  Page 1 of 1
+                </span>
+
+                <button 
+                  type="button" 
+                  id="next-page-btn" 
+                  class="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
+                >
+                  <span>Next</span>
+                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </nav>
+            </div>
+          </div>
         </div>
+      </div>
+
+      <!-- Empty State (Shown when no results match filters) -->
+      <div id="no-results-state" class="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-sm hidden">
+        <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+          <svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+        </div>
+        <h3 class="mt-4 text-lg font-semibold text-slate-900">No matching posts found</h3>
+        <p class="mt-2 text-sm text-slate-500 max-w-sm mx-auto">
+          No scraped posts match your current location, budget, or type filters. Try adjusting your parameters.
+        </p>
+        <button 
+          type="button" 
+          id="reset-filters-btn-empty" 
+          class="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition-colors shadow-sm cursor-pointer"
+        >
+          <span>Reset All Filters</span>
+        </button>
       </div>
     </div>
   </div>
 
-  <!-- Empty State (Shown when no results match filters) -->
-  <div id="no-results-state" class="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-sm hidden">
-    <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-50 text-amber-600">
-      <svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-      </svg>
-    </div>
-    <h3 class="mt-4 text-lg font-semibold text-slate-900">No matching posts found</h3>
-    <p class="mt-2 text-sm text-slate-500 max-w-sm mx-auto">
-      No scraped posts match your current search keywords or group filter. Try adjusting your search parameters.
-    </p>
-    <button 
-      type="button" 
-      id="reset-filters-btn" 
-      class="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition-colors shadow-sm cursor-pointer"
-    >
-      <span>Reset All Filters</span>
-    </button>
-  </div>
+  <style is:global>
+    .leaflet-popup-content-wrapper {
+      border-radius: 12px;
+      box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+      padding: 4px;
+    }
+    .leaflet-popup-tip-container {
+      margin-top: -1px;
+    }
+    .custom-map-marker {
+      background: transparent;
+      border: none;
+    }
+  </style>
 
   <script>
     document.addEventListener("DOMContentLoaded", () => {
-      const inputDesc = document.getElementById("search-desc") as HTMLInputElement;
-      const inputAuthor = document.getElementById("search-author") as HTMLInputElement;
-      const selectGroup = document.getElementById("filter-group") as HTMLSelectElement;
+      const inputLocation = document.getElementById("filter-location") as HTMLInputElement;
+      const inputBudget = document.getElementById("filter-budget") as HTMLInputElement;
+      
+      const typeCheckboxes = Array.from(document.querySelectorAll(".filter-type")) as HTMLInputElement[];
+      const tenantCheckboxes = Array.from(document.querySelectorAll(".filter-tenant")) as HTMLInputElement[];
+      
       const resultsContainer = document.getElementById("results-container");
       const searchSkeleton = document.getElementById("search-skeleton");
       const noResultsState = document.getElementById("no-results-state");
-      const paginationWrapper = document.getElementById("pagination-wrapper");
-      const resetBtn = document.getElementById("reset-filters-btn");
+      const resetSidebarBtn = document.getElementById("reset-filters-btn-sidebar");
+      const resetEmptyBtn = document.getElementById("reset-filters-btn-empty");
       const postWrappers = document.querySelectorAll(".post-filter-wrapper");
 
       // Pagination elements
@@ -221,7 +336,7 @@ const groups = Array.from(new Set(validPosts.map((p: Post) => p.group_name || p.
         }
 
         // Update UI text and button states
-        if (pageFrom) pageFrom.textContent = (totalPosts === 0 ? 0 : startIndex + 1).toString();
+        if (pageFrom) pageFrom.textContent = (totalPosts === 0 ? "0" : (startIndex + 1).toString());
         if (pageTo) pageTo.textContent = endIndex.toString();
         if (pageTotal) pageTotal.textContent = totalPosts.toString();
         if (pageIndicator) pageIndicator.textContent = `Page ${currentPage} of ${totalPages}`;
@@ -243,12 +358,22 @@ const groups = Array.from(new Set(validPosts.map((p: Post) => p.group_name || p.
         }
       }
 
+      function extractNumbers(text: string): number[] {
+        // match numbers that might have commas (e.g. 15,000 or 15000)
+        const regex = /\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b|\b\d+\b/g;
+        const matches = text.match(regex);
+        if (!matches) return [];
+        return matches.map(m => parseInt(m.replace(/,/g, ''), 10)).filter(n => !isNaN(n));
+      }
+
       function filterPosts() {
         if (!resultsContainer || !searchSkeleton || !noResultsState) return;
 
-        const descQuery = inputDesc.value.toLowerCase().trim();
-        const authorQuery = inputAuthor.value.toLowerCase().trim();
-        const groupFilter = selectGroup.value;
+        const locQuery = inputLocation.value.toLowerCase().trim();
+        const budgetValue = parseInt(inputBudget.value, 10);
+        
+        const selectedTypes = typeCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
+        const selectedTenants = tenantCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
 
         // Show skeleton loader briefly to indicate background filtering
         resultsContainer.classList.add("hidden");
@@ -263,15 +388,51 @@ const groups = Array.from(new Set(validPosts.map((p: Post) => p.group_name || p.
 
           postWrappers.forEach((elem) => {
             const wrapper = elem as HTMLElement;
-            const author = wrapper.getAttribute("data-author") || "";
             const body = wrapper.getAttribute("data-body") || "";
-            const group = wrapper.getAttribute("data-group") || "";
 
-            const matchesDesc = !descQuery || body.includes(descQuery);
-            const matchesAuthor = !authorQuery || author.includes(authorQuery);
-            const matchesGroup = !groupFilter || group === groupFilter;
+            // --- 1. Location Filter ---
+            const matchesLocation = !locQuery || body.includes(locQuery);
 
-            if (matchesDesc && matchesAuthor && matchesGroup) {
+            // --- 2. Budget Filter ---
+            let matchesBudget = true;
+            if (!isNaN(budgetValue) && budgetValue > 0) {
+              const numbersInPost = extractNumbers(body);
+              // Assume valid rent/price numbers are at least 1000 (to filter out 2bhk, floor 3, etc)
+              const rentNumbers = numbersInPost.filter(n => n >= 1000);
+              if (rentNumbers.length > 0) {
+                matchesBudget = rentNumbers.some(n => n <= budgetValue);
+              } else {
+                // If no numbers > 1000 found, we might exclude it if they specify budget, 
+                // or include it because it might not mention price. Let's strictly exclude if they want a budget limit.
+                matchesBudget = false;
+              }
+            }
+
+            // --- 3. Property Type Filter ---
+            let matchesType = true;
+            if (selectedTypes.length > 0) {
+              matchesType = selectedTypes.some(type => {
+                if (type === '1bhk') return body.includes('1bhk') || body.includes('1 bhk');
+                if (type === '2bhk') return body.includes('2bhk') || body.includes('2 bhk');
+                if (type === '3bhk') return body.includes('3bhk') || body.includes('3 bhk');
+                if (type === '4bhk') return body.includes('4bhk') || body.includes('4 bhk');
+                if (type === 'boyspg') return body.includes('boy pg') || body.includes('boys pg') || body.includes('boyspg') || body.includes('boy\'s pg');
+                if (type === 'girlspg') return body.includes('girl pg') || body.includes('girls pg') || body.includes('girlspg') || body.includes('girl\'s pg');
+                return false;
+              });
+            }
+
+            // --- 4. Tenant Filter ---
+            let matchesTenant = true;
+            if (selectedTenants.length > 0) {
+              matchesTenant = selectedTenants.some(tenant => {
+                if (tenant === 'bacelor') return body.includes('bacelor') || body.includes('bachelor');
+                if (tenant === 'families') return body.includes('families') || body.includes('family');
+                return false;
+              });
+            }
+
+            if (matchesLocation && matchesBudget && matchesType && matchesTenant) {
               matchingPosts.push(wrapper);
             }
           });
@@ -282,17 +443,26 @@ const groups = Array.from(new Set(validPosts.map((p: Post) => p.group_name || p.
         }, 250);
       }
 
+      // Read initial location query if any
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlLocation = urlParams.get('location');
+      if (urlLocation && inputLocation) {
+        inputLocation.value = urlLocation;
+      }
+      
       // Initial filter run to set up pagination
       filterPosts();
 
-      if (inputDesc) inputDesc.addEventListener("input", filterPosts);
-      if (inputAuthor) inputAuthor.addEventListener("input", filterPosts);
-      if (selectGroup) selectGroup.addEventListener("change", filterPosts);
+      if (inputLocation) inputLocation.addEventListener("input", filterPosts);
+      if (inputBudget) inputBudget.addEventListener("input", filterPosts);
+      
+      typeCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
+      tenantCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
 
       function goToPage(newPage: number) {
         currentPage = newPage;
         updatePaginationView();
-        window.scrollTo({ top: 300, behavior: 'smooth' });
+        document.getElementById('results-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
 
       if (prevBtn) prevBtn.addEventListener("click", () => goToPage(currentPage - 1));
@@ -300,13 +470,82 @@ const groups = Array.from(new Set(validPosts.map((p: Post) => p.group_name || p.
       if (nextBtn) nextBtn.addEventListener("click", () => goToPage(currentPage + 1));
       if (nextMobile) nextMobile.addEventListener("click", () => goToPage(currentPage + 1));
 
-      if (resetBtn) {
-        resetBtn.addEventListener("click", () => {
-          if (inputDesc) inputDesc.value = "";
-          if (inputAuthor) inputAuthor.value = "";
-          if (selectGroup) selectGroup.value = "";
-          filterPosts();
+      function resetAllFilters() {
+        if (inputLocation) inputLocation.value = "";
+        if (inputBudget) inputBudget.value = "";
+        typeCheckboxes.forEach(cb => cb.checked = false);
+        tenantCheckboxes.forEach(cb => cb.checked = false);
+        filterPosts();
+      }
+
+      if (resetSidebarBtn) resetSidebarBtn.addEventListener("click", resetAllFilters);
+      if (resetEmptyBtn) resetEmptyBtn.addEventListener("click", resetAllFilters);
+
+      // --- INITIALIZE MAP ---
+      const mapContainer = document.getElementById('map');
+      const dataScript = document.getElementById('map-data');
+      
+      if (mapContainer && dataScript) {
+        const map = L.map('map').setView([23.04, 72.53], 12);
+
+        L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+          attribution: '&copy; Google Maps',
+          maxZoom: 20
+        }).addTo(map);
+
+        const areas = JSON.parse(dataScript.textContent || '[]');
+
+        areas.forEach((area: any) => {
+          const htmlIcon = L.divIcon({
+            className: 'custom-map-marker',
+            html: `
+              <div class="relative flex flex-col items-center justify-center bg-blue-600 text-white font-bold rounded-xl shadow-lg border-2 border-white hover:bg-blue-700 hover:scale-105 transition-transform cursor-pointer px-3 py-1.5 min-w-max">
+                <span class="text-[11px] uppercase tracking-wide opacity-90">${area.name}</span>
+                <span class="text-xs bg-white text-blue-700 px-2 py-0.5 rounded-full mt-1">${area.count} Posts</span>
+                <div class="absolute -bottom-2 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-blue-600"></div>
+              </div>
+            `,
+            iconSize: [80, 50],
+            iconAnchor: [40, 50],
+            popupAnchor: [0, -50]
+          });
+
+          const marker = L.marker([area.lat, area.lng], { icon: htmlIcon }).addTo(map);
+          
+          const popupContent = `
+            <div class="p-2 text-center w-32">
+              <h3 class="font-bold text-lg text-slate-900 mb-1">${area.name}</h3>
+              <p class="text-xs text-slate-600 mb-3">${area.count} posts available.</p>
+              <button class="map-filter-btn inline-block bg-slate-900 text-white text-xs font-semibold px-4 py-2 rounded-lg hover:bg-slate-800 transition-colors w-full cursor-pointer" data-location="${area.name}">
+                Filter Area
+              </button>
+            </div>
+          `;
+
+          marker.bindPopup(popupContent, {
+            closeButton: false,
+            className: 'custom-popup'
+          });
+          
+          marker.on('mouseover', function () { this.openPopup(); });
         });
+        
+        // Handle clicks on the "Filter Area" buttons inside leaflet popups
+        map.on('popupopen', (e) => {
+          const btn = e.popup._contentNode.querySelector('.map-filter-btn');
+          if (btn) {
+            btn.addEventListener('click', (ev: any) => {
+              const loc = ev.target.getAttribute('data-location');
+              if (loc && inputLocation) {
+                inputLocation.value = loc;
+                filterPosts();
+                document.getElementById('results-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }
+            });
+          }
+        });
+
+        setTimeout(() => map.invalidateSize(), 500);
       }
     });
   </script>

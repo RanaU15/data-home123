@@ -51,7 +51,8 @@ let body = '';
 let imageCount = 0;
 
 if (post) {
-  images = parseImages(post.images, post.screenshot);
+  // Never use screenshots
+  images = parseImages(post.images, null);
   author = post.author || 'Unknown Author';
   groupName = post.group_name || post.group_id || 'Facebook Group';
   postDate = formatDate(post.post_date || post.date || post.scraped_at);
@@ -104,20 +105,12 @@ if (post) {
       <!-- Left Column: Image Gallery -->
       <div class="lg:col-span-7 space-y-4">
         <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm aspect-video relative">
-          {images.length > 0 ? (
-            <img 
-              id="main-gallery-image" 
-              src={images[0]} 
-              alt="Full post gallery display" 
-              class="h-full w-full object-cover object-center transition-all duration-300"
-            />
-          ) : (
-            <div class="flex h-full w-full items-center justify-center text-slate-400 bg-slate-100">
-              <svg class="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
-              </svg>
-            </div>
-          )}
+          <img 
+            id="main-gallery-image" 
+            src={images[0] || '/image (3).png'} 
+            alt="Full post gallery display" 
+            class="h-full w-full object-cover object-center transition-all duration-300"
+          />
           {imageCount > 0 && (
             <div class="absolute bottom-3 right-3 rounded-lg bg-black/75 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-sm">
               {imageCount} {imageCount === 1 ? 'Image' : 'Images'}
@@ -146,7 +139,6 @@ if (post) {
           <div class="flex items-center justify-between gap-4 border-b border-slate-100 pb-4">
             <div>
               <h2 class="font-bold text-slate-900 text-lg">{author}</h2>
-              <p class="text-xs text-slate-500 mt-0.5">Created: {postDate}</p>
             </div>
             <span class="inline-flex items-center rounded-lg bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 border border-blue-200/60">
               {groupName}
