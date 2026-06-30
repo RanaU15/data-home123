@@ -11,6 +11,7 @@ function jsonResponse(data, status = 200) {
     status,
     headers: {
       'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=60',
       ...corsHeaders,
     },
   });
@@ -58,13 +59,23 @@ export default {
 
         const offset = (page - 1) * limit;
 
+        const postType = url.searchParams.get('post_type');
+        const hasVideo = url.searchParams.get('has_video');
+        const author = url.searchParams.get('author');
+        const dateRangeStart = url.searchParams.get('date_start');
+        const dateRangeEnd = url.searchParams.get('date_end');
+
         let query = supabase
           .from('posts')
           .select('*', { count: 'exact' });
 
-        if (group) {
-          query = query.eq('group_name', group);
-        }
+        if (group) query = query.eq('group_name', group);
+        if (postType) query = query.eq('post_type', postType);
+        if (hasVideo === 'true') query = query.eq('has_video', true);
+        if (hasVideo === 'false') query = query.eq('has_video', false);
+        if (author) query = query.ilike('author', `%${author}%`);
+        if (dateRangeStart) query = query.gte('post_created_at', dateRangeStart);
+        if (dateRangeEnd) query = query.lte('post_created_at', dateRangeEnd);
 
         query = query
           .order('scraped_at', { ascending: sort === 'asc' })
@@ -117,10 +128,11 @@ export default {
 
         const offset = (page - 1) * limit;
 
+        const queryStr = q.trim().split(/\s+/).join(' | ');
         const { data, count, error } = await supabase
           .from('posts')
           .select('*', { count: 'exact' })
-          .or(`body.ilike.%${q}%,author.ilike.%${q}%,group_name.ilike.%${q}%`)
+          .textSearch('fts', queryStr, { type: 'websearch', config: 'english' })
           .order('scraped_at', { ascending: false })
           .range(offset, offset + limit - 1);
 

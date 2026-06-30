@@ -403,132 +403,167 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 }
             }
 
-            // 1. Extract metadata & permalink
-            let data = await feedUnit.evaluate((el, { passedBody }) => {
-                let permalinkObj = null;
-                let bestUrl = null;
-                let bestTimestamp = "Today";
+            // --- META EXTRACTOR FUNCTION ---
+            const extractMetadata = async (locator, passedBody = "") => {
+                return await locator.evaluate((el, passedBody) => {
+                    let permalinkObj = null;
+                    let bestUrl = null;
+                    let bestTimestamp = "Today";
 
-                // Smarter permalink extraction: check all possible locations
-                const links = [...el.querySelectorAll('a[href*="/posts/"], a[href*="/permalink/"], a[href*="/photo.php"], a[href*="/story.php"], a[href*="multi_permalinks="], a[href*="story_fbid="], a[href*="fbid="]')];
+                    const links = [...el.querySelectorAll('a[href*="/posts/"], a[href*="/permalink/"], a[href*="/photo.php"], a[href*="/story.php"], a[href*="multi_permalinks="], a[href*="story_fbid="], a[href*="fbid="]')];
 
-                for (const a of links) {
-                    const href = a.getAttribute("href") || "";
-                    if (!href.includes("/user/") && !href.includes("profile.php") && !href.includes("comment_id") && !href.includes("p.php")) {
-                        bestUrl = href;
-                        if (a.innerText && a.innerText.trim()) {
-                            bestTimestamp = a.innerText.trim();
-                        }
-                        break;
-                    }
-                }
-
-                if (!bestUrl) {
-                    const dataFtEl = el.querySelector('[data-ft]');
-                    if (dataFtEl) {
-                        const ft = dataFtEl.getAttribute('data-ft');
-                        try {
-                            const parsedFt = JSON.parse(ft);
-                            if (parsedFt.mf_story_key) bestUrl = `/posts/${parsedFt.mf_story_key}`;
-                            else if (parsedFt.top_level_post_id) bestUrl = `/posts/${parsedFt.top_level_post_id}`;
-                        } catch (e) { }
-                    }
-                }
-
-                if (bestUrl) {
-                    permalinkObj = { url: bestUrl, timestamp: bestTimestamp };
-                }
-
-                let bodyText = passedBody;
-
-                let rawAuthor = "Unknown Author";
-                const candidates = Array.from(el.querySelectorAll('h2, h3, h4, strong, a[href*="/user/"], a[href*="/profile.php"]'));
-                for (const cand of candidates) {
-                    const txt = cand.innerText ? cand.innerText.trim() : "";
-                    if (txt && txt !== "Facebook" && !txt.includes("Suggested") && !txt.includes("Sponsored")) {
-                        rawAuthor = txt;
-                        break;
-                    }
-                }
-                const author = rawAuthor
-                    .replace(/\bFollow\b|\bFollowing\b/g, '')
-                    .replace(/•/g, '')
-                    .replace(/·/g, '')
-                    .replace(/\n+/g, ' ')
-                    .replace(/\s+/g, ' ')
-                    .trim();
-
-                let likes = 0;
-                const reactionElements = [...el.querySelectorAll('[aria-label*="reaction"], [aria-label*="Like"], [aria-label*="superstar"], [role="button"], span.x1e558r4, div.x1n2onr6, svg')];
-                for (const item of reactionElements) {
-                    const aria = item.getAttribute('aria-label') || "";
-                    const txt = (item.innerText || "").trim();
-                    if (aria.includes("react") || aria.includes("Like") || aria.includes("superstar")) {
-                        const match = aria.match(/\d+/);
-                        if (match) {
-                            likes = Number(match[0]);
-                            if (likes > 0) break;
-                        }
-                    }
-                    if (txt.length > 0 && txt.length < 10 && /^\d+$/.test(txt)) {
-                        const num = Number(txt);
-                        if (num > 0) {
-                            likes = num;
+                    for (const a of links) {
+                        const href = a.getAttribute("href") || "";
+                        if (!href.includes("/user/") && !href.includes("profile.php") && !href.includes("comment_id") && !href.includes("p.php")) {
+                            bestUrl = href;
+                            if (a.innerText && a.innerText.trim()) {
+                                bestTimestamp = a.innerText.trim();
+                            }
                             break;
                         }
                     }
-                }
 
-                let comments = 0;
-                let shares = 0;
-                const footer = [...el.querySelectorAll('div[role="button"], a, span')];
-                for (const item of footer) {
-                    const txt = (item.innerText || "").trim();
-                    if (/^\d+\s+comments?$/i.test(txt)) {
-                        comments = Number(txt.match(/\d+/)[0]);
+                    if (!bestUrl) {
+                        const dataFtEl = el.querySelector('[data-ft]');
+                        if (dataFtEl) {
+                            const ft = dataFtEl.getAttribute('data-ft');
+                            try {
+                                const parsedFt = JSON.parse(ft);
+                                if (parsedFt.mf_story_key) bestUrl = `/posts/${parsedFt.mf_story_key}`;
+                                else if (parsedFt.top_level_post_id) bestUrl = `/posts/${parsedFt.top_level_post_id}`;
+                            } catch (e) { }
+                        }
                     }
-                    if (/^\d+\s+shares?$/i.test(txt)) {
-                        shares = Number(txt.match(/\d+/)[0]);
+
+                    if (bestUrl) {
+                        permalinkObj = { url: bestUrl, timestamp: bestTimestamp };
                     }
-                }
 
-                const videoEl = el.querySelector('video');
-                const video = videoEl ? (videoEl.getAttribute('src') || "Embedded Video Present") : "None";
-
-                // Better image filtering: Ignore avatars, profile pictures, cover photos, UI icons, emoji, stickers, spacer images, < 150px
-                const imgEls = Array.from(el.querySelectorAll('img'));
-                const images = [];
-                for (const img of imgEls) {
-                    const src = img.getAttribute('src') || "";
-                    if (
-                        src &&
-                        src.startsWith("http") &&
-                        !src.includes("rsrc.php") &&
-                        !src.includes("emoji") &&
-                        !src.includes("avatar") &&
-                        !src.includes("sticker") &&
-                        !src.includes("p32x32") &&
-                        !src.includes("p16x16") &&
-                        !src.includes("p50x50") &&
-                        !src.includes("s60x60") &&
-                        !src.includes("badges") &&
-                        !src.includes("profile") &&
-                        !src.includes("reaction") &&
-                        !src.includes("fb_icon") &&
-                        !src.includes("spis_") &&
-                        !src.includes("x1bwp2qo") &&
-                        !src.includes("spacer") &&
-                        !src.includes("cover")
-                    ) {
-                        const w = img.getAttribute('width');
-                        const h = img.getAttribute('height');
-                        if ((w && parseInt(w) < 150) || (h && parseInt(h) < 150)) continue;
-                        images.push(src);
+                    let bodyText = passedBody || "";
+                    if (!passedBody) {
+                        const messageEl = el.querySelector('[data-ad-comet-preview="message"], [data-ad-preview="message"]');
+                        if (messageEl && messageEl.innerText.trim()) {
+                            bodyText = messageEl.innerText.replace(/See translation\n?/g, '').trim();
+                        } else {
+                            const textBlocks = Array.from(el.querySelectorAll('div[dir="auto"]'));
+                            for (const block of textBlocks) {
+                                const txt = block.innerText || "";
+                                if (txt.includes("Like") || txt.includes("Reply") || txt.includes("Share") || txt.includes("Comment") || txt.includes("Send") || txt.includes("Write a comment")) break;
+                                if (!txt.includes("See translation") && txt.length > 3) bodyText += txt + "\n";
+                            }
+                            bodyText = bodyText.trim();
+                        }
                     }
-                }
 
-                return { permalinkObj, bodyText, author, likes, comments, shares, video, images };
-            }, { passedBody: finalBody }).catch(() => null);
+                    let author = "Unknown Author";
+                    let author_profile_url = null;
+                    const candidates = Array.from(el.querySelectorAll('h2, h3, h4, strong, a[href*="/user/"], a[href*="/profile.php"]'));
+                    for (const cand of candidates) {
+                        const txt = cand.innerText ? cand.innerText.trim() : "";
+                        if (txt && txt !== "Facebook" && !txt.includes("Suggested") && !txt.includes("Sponsored")) {
+                            author = txt.replace(/\bFollow\b|\bFollowing\b/g, '').replace(/[•·]/g, '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+                            if (cand.tagName === 'A') author_profile_url = cand.getAttribute("href") || null;
+                            break;
+                        }
+                    }
+                    
+                    let author_avatar = null;
+                    const avatarImg = el.querySelector('image[preserveAspectRatio="xMidYMid slice"]') || el.querySelector('img[src*="s60x60"], img[src*="s100x100"]');
+                    if (avatarImg) author_avatar = avatarImg.getAttribute('href') || avatarImg.getAttribute('src');
+
+                    let likes = 0;
+                    let reaction_breakdown = {};
+                    const reactionElements = [...el.querySelectorAll('[aria-label*="reaction"], [aria-label*="Like"], [aria-label*="superstar"], [role="button"], span.x1e558r4, div.x1n2onr6, svg')];
+                    for (const item of reactionElements) {
+                        const aria = item.getAttribute('aria-label') || "";
+                        const txt = (item.innerText || "").trim();
+                        if (aria.includes("react") || aria.includes("Like") || aria.includes("superstar")) {
+                            const match = aria.match(/\d+/);
+                            if (match) { 
+                                likes = Number(match[0]); 
+                                // Parse breakdown: "120 Like, 40 Love, 5 Care"
+                                const breakdownMatches = aria.matchAll(/(\d+)\s+([A-Za-z]+)/g);
+                                for (const bm of breakdownMatches) {
+                                    const count = Number(bm[1]);
+                                    const type = bm[2].toLowerCase();
+                                    if (['like', 'love', 'care', 'haha', 'wow', 'sad', 'angry'].includes(type)) {
+                                        reaction_breakdown[type] = count;
+                                    }
+                                }
+                                if (likes > 0) break; 
+                            }
+                        }
+                        if (txt.length > 0 && txt.length < 10 && /^\d+$/.test(txt)) {
+                            const num = Number(txt);
+                            if (num > 0) { likes = num; break; }
+                        }
+                    }
+
+                    let comments_disabled = false;
+                    const commentInputs = el.querySelectorAll('form input, [aria-label="Write a comment"], [placeholder="Write a comment..."]');
+                    if (commentInputs.length === 0 && bodyText.includes("comments are disabled")) {
+                        comments_disabled = true;
+                    }
+
+                    let comments = 0;
+                    let shares = 0;
+                    const footer = [...el.querySelectorAll('div[role="button"], a, span')];
+                    for (const item of footer) {
+                        const txt = (item.innerText || "").trim();
+                        if (/^\d+\s+comments?$/i.test(txt)) comments = Number(txt.match(/\d+/)[0]);
+                        if (/^\d+\s+shares?$/i.test(txt)) shares = Number(txt.match(/\d+/)[0]);
+                    }
+
+                    const videoEls = Array.from(el.querySelectorAll('video'));
+                    const video_urls = videoEls.map(v => v.getAttribute('src')).filter(Boolean);
+                    const has_video = video_urls.length > 0;
+                    const video_count = video_urls.length;
+                    
+                    let video_thumbnail = null;
+                    const possibleThumbnails = el.querySelectorAll('img');
+                    if (has_video) {
+                        for(let t of possibleThumbnails) {
+                            if(t.closest('div[data-video-id]') || t.className.includes('video')) {
+                                video_thumbnail = t.getAttribute('src');
+                                break;
+                            }
+                        }
+                    }
+                    let video_duration = null; // Basic placeholder as requested
+
+                    const imgEls = Array.from(el.querySelectorAll('img'));
+                    const images = [];
+                    for (const img of imgEls) {
+                        const src = img.getAttribute('src') || "";
+                        if (src && src.startsWith("http") && !src.includes("rsrc.php") && !src.includes("emoji") && !src.includes("avatar") && !src.includes("sticker") && !src.includes("p32x32") && !src.includes("p16x16") && !src.includes("p50x50") && !src.includes("s60x60") && !src.includes("badges") && !src.includes("profile") && !src.includes("reaction") && !src.includes("fb_icon") && !src.includes("spis_") && !src.includes("x1bwp2qo") && !src.includes("spacer") && !src.includes("cover")) {
+                            const w = img.getAttribute('width');
+                            const h = img.getAttribute('height');
+                            if ((w && parseInt(w) < 150) || (h && parseInt(h) < 150)) continue;
+                            images.push(src);
+                        }
+                    }
+                    
+                    let post_type = "text";
+                    if (has_video && images.length > 0) post_type = "mixed";
+                    else if (has_video && video_count > 1) post_type = "multiple_videos";
+                    else if (has_video) post_type = "video";
+                    else if (images.length > 1) post_type = "multiple_images";
+                    else if (images.length === 1) post_type = "image";
+
+                    // Support backwards compatibility for video field
+                    const video = has_video ? video_urls[0] : "None";
+
+                    return { 
+                        permalinkObj, bodyText, author, author_profile_url, author_avatar, 
+                        likes, comments, shares, video, video_urls, video_thumbnail, 
+                        video_duration, video_count, has_video, images, post_type,
+                        reaction_breakdown, comments_disabled
+                    };
+                }, passedBody).catch(() => null);
+            };
+
+            // 1. Extract metadata & permalink
+            let data = await extractMetadata(feedUnit, finalBody);
 
             if (!data) {
                 console.log("Skipped");
@@ -599,146 +634,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 const delays = [250, 250, 500];
                 for (const delay of delays) {
                     await targetPage.waitForTimeout(delay).catch(() => { });
-                    data = await feedUnit.evaluate((el) => {
-                        let permalinkObj = null;
-                        let bestUrl = null;
-                        let bestTimestamp = "Today";
-
-                        const links = [...el.querySelectorAll('a[href*="/posts/"], a[href*="/permalink/"], a[href*="/photo.php"], a[href*="/story.php"], a[href*="multi_permalinks="], a[href*="story_fbid="], a[href*="fbid="]')];
-
-                        for (const a of links) {
-                            const href = a.getAttribute("href") || "";
-                            if (!href.includes("/user/") && !href.includes("profile.php") && !href.includes("comment_id") && !href.includes("p.php")) {
-                                bestUrl = href;
-                                if (a.innerText && a.innerText.trim()) {
-                                    bestTimestamp = a.innerText.trim();
-                                }
-                                break;
-                            }
-                        }
-
-                        if (!bestUrl) {
-                            const dataFtEl = el.querySelector('[data-ft]');
-                            if (dataFtEl) {
-                                const ft = dataFtEl.getAttribute('data-ft');
-                                try {
-                                    const parsedFt = JSON.parse(ft);
-                                    if (parsedFt.mf_story_key) bestUrl = `/posts/${parsedFt.mf_story_key}`;
-                                    else if (parsedFt.top_level_post_id) bestUrl = `/posts/${parsedFt.top_level_post_id}`;
-                                } catch (e) { }
-                            }
-                        }
-
-                        if (bestUrl) {
-                            permalinkObj = { url: bestUrl, timestamp: bestTimestamp };
-                        }
-
-                        const messageEl = el.querySelector('[data-ad-comet-preview="message"], [data-ad-preview="message"]');
-                        let bodyText = "";
-                        if (messageEl && messageEl.innerText.trim()) {
-                            bodyText = messageEl.innerText.replace(/See translation\n?/g, '').trim();
-                        } else {
-                            const textBlocks = Array.from(el.querySelectorAll('div[dir="auto"]'));
-                            for (const block of textBlocks) {
-                                const txt = block.innerText || "";
-                                if (txt.includes("Like") || txt.includes("Reply") || txt.includes("Share") || txt.includes("Comment") || txt.includes("Send") || txt.includes("Write a comment")) {
-                                    break;
-                                }
-                                if (!txt.includes("See translation") && txt.length > 3) {
-                                    bodyText += txt + "\n";
-                                }
-                            }
-                            bodyText = bodyText.trim();
-                        }
-
-                        let rawAuthor = "Unknown Author";
-                        const candidates = Array.from(el.querySelectorAll('h2, h3, h4, strong, a[href*="/user/"], a[href*="/profile.php"]'));
-                        for (const cand of candidates) {
-                            const txt = cand.innerText ? cand.innerText.trim() : "";
-                            if (txt && txt !== "Facebook" && !txt.includes("Suggested") && !txt.includes("Sponsored")) {
-                                rawAuthor = txt;
-                                break;
-                            }
-                        }
-                        const author = rawAuthor
-                            .replace(/\bFollow\b|\bFollowing\b/g, '')
-                            .replace(/•/g, '')
-                            .replace(/·/g, '')
-                            .replace(/\n+/g, ' ')
-                            .replace(/\s+/g, ' ')
-                            .trim();
-
-                        let likes = 0;
-                        const reactionElements = [...el.querySelectorAll('[aria-label*="reaction"], [aria-label*="Like"], [aria-label*="superstar"], [role="button"], span.x1e558r4, div.x1n2onr6, svg')];
-                        for (const item of reactionElements) {
-                            const aria = item.getAttribute('aria-label') || "";
-                            const txt = (item.innerText || "").trim();
-                            if (aria.includes("react") || aria.includes("Like") || aria.includes("superstar")) {
-                                const match = aria.match(/\d+/);
-                                if (match) {
-                                    likes = Number(match[0]);
-                                    if (likes > 0) break;
-                                }
-                            }
-                            if (txt.length > 0 && txt.length < 10 && /^\d+$/.test(txt)) {
-                                const num = Number(txt);
-                                if (num > 0) {
-                                    likes = num;
-                                    break;
-                                }
-                            }
-                        }
-
-                        let comments = 0;
-                        let shares = 0;
-                        const footer = [...el.querySelectorAll('div[role="button"], a, span')];
-                        for (const item of footer) {
-                            const txt = (item.innerText || "").trim();
-                            if (/^\d+\s+comments?$/i.test(txt)) {
-                                comments = Number(txt.match(/\d+/)[0]);
-                            }
-                            if (/^\d+\s+shares?$/i.test(txt)) {
-                                shares = Number(txt.match(/\d+/)[0]);
-                            }
-                        }
-
-                        const videoEl = el.querySelector('video');
-                        const video = videoEl ? (videoEl.getAttribute('src') || "Embedded Video Present") : "None";
-
-                        const imgEls = Array.from(el.querySelectorAll('img'));
-                        const images = [];
-                        for (const img of imgEls) {
-                            const src = img.getAttribute('src') || "";
-                            if (
-                                src &&
-                                src.startsWith("http") &&
-                                !src.includes("rsrc.php") &&
-                                !src.includes("emoji") &&
-                                !src.includes("avatar") &&
-                                !src.includes("sticker") &&
-                                !src.includes("p32x32") &&
-                                !src.includes("p16x16") &&
-                                !src.includes("p50x50") &&
-                                !src.includes("s60x60") &&
-                                !src.includes("badges") &&
-                                !src.includes("profile") &&
-                                !src.includes("reaction") &&
-                                !src.includes("fb_icon") &&
-                                !src.includes("spis_") &&
-                                !src.includes("x1bwp2qo") &&
-                                !src.includes("spacer") &&
-                                !src.includes("cover")
-                            ) {
-                                const w = img.getAttribute('width');
-                                const h = img.getAttribute('height');
-                                if ((w && parseInt(w) < 150) || (h && parseInt(h) < 150)) continue;
-                                images.push(src);
-                            }
-                        }
-
-                        return { permalinkObj, bodyText, author, likes, comments, shares, video, images };
-                    }).catch(() => null);
-
+                    data = await extractMetadata(feedUnit);
                     if (data && data.permalinkObj) break;
                 }
             }
@@ -749,149 +645,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 if (await timestampEl.count().catch(() => 0)) {
                     await timestampEl.click({ timeout: 2000, noWaitAfter: true }).catch(() => { });
                     await targetPage.waitForTimeout(700).catch(() => { });
-                    data = await feedUnit.evaluate((el) => {
-                        let permalinkObj = null;
-                        let bestUrl = null;
-                        let bestTimestamp = "Today";
-
-                        const links = [...el.querySelectorAll('a[href*="/posts/"], a[href*="/permalink/"], a[href*="/photo.php"], a[href*="/story.php"], a[href*="multi_permalinks="], a[href*="story_fbid="], a[href*="fbid="]')];
-
-                        for (const a of links) {
-                            const href = a.getAttribute("href") || "";
-                            if (!href.includes("/user/") && !href.includes("profile.php") && !href.includes("comment_id") && !href.includes("p.php")) {
-                                bestUrl = href;
-                                if (a.innerText && a.innerText.trim()) {
-                                    bestTimestamp = a.innerText.trim();
-                                }
-                                break;
-                            }
-                        }
-
-                        if (!bestUrl) {
-                            const dataFtEl = el.querySelector('[data-ft]');
-                            if (dataFtEl) {
-                                const ft = dataFtEl.getAttribute('data-ft');
-                                try {
-                                    const parsedFt = JSON.parse(ft);
-                                    if (parsedFt.mf_story_key) bestUrl = `/posts/${parsedFt.mf_story_key}`;
-                                    else if (parsedFt.top_level_post_id) bestUrl = `/posts/${parsedFt.top_level_post_id}`;
-                                } catch (e) { }
-                            }
-                        }
-
-                        if (bestUrl) {
-                            permalinkObj = { url: bestUrl, timestamp: bestTimestamp };
-                        }
-
-                        const messageEl = el.querySelector('[data-ad-comet-preview="message"], [data-ad-preview="message"]');
-                        let bodyText = "";
-                        if (messageEl && messageEl.innerText.trim()) {
-                            bodyText = messageEl.innerText.replace(/See translation\n?/g, '').trim();
-                        } else {
-                            const textBlocks = Array.from(el.querySelectorAll('div[dir="auto"]'));
-                            for (const block of textBlocks) {
-                                const txt = block.innerText || "";
-                                if (txt.includes("Like") || txt.includes("Reply") || txt.includes("Share") || txt.includes("Comment") || txt.includes("Send") || txt.includes("Write a comment")) {
-                                    break;
-                                }
-                                if (!txt.includes("See translation") && txt.length > 3) {
-                                    bodyText += txt + "\n";
-                                }
-                            }
-                            bodyText = bodyText.trim();
-                        }
-
-                        let rawAuthor = "Unknown Author";
-                        const candidates = Array.from(el.querySelectorAll('h2, h3, h4, strong, a[href*="/user/"], a[href*="/profile.php"]'));
-                        for (const cand of candidates) {
-                            const txt = cand.innerText ? cand.innerText.trim() : "";
-                            if (txt && txt !== "Facebook" && !txt.includes("Suggested") && !txt.includes("Sponsored")) {
-                                rawAuthor = txt;
-                                break;
-                            }
-                        }
-                        const author = rawAuthor
-                            .replace(/\bFollow\b|\bFollowing\b/g, '')
-                            .replace(/•/g, '')
-                            .replace(/·/g, '')
-                            .replace(/\n+/g, ' ')
-                            .replace(/\s+/g, ' ')
-                            .trim();
-
-                        let likes = 0;
-                        const reactionElements = [...el.querySelectorAll('[aria-label*="reaction"], [aria-label*="Like"], [aria-label*="superstar"], [role="button"], span.x1e558r4, div.x1n2onr6, svg')];
-                        for (const item of reactionElements) {
-                            const aria = item.getAttribute('aria-label') || "";
-                            const txt = (item.innerText || "").trim();
-                            if (aria.includes("react") || aria.includes("Like") || aria.includes("superstar")) {
-                                const match = aria.match(/\d+/);
-                                if (match) {
-                                    likes = Number(match[0]);
-                                    if (likes > 0) break;
-                                }
-                            }
-                            if (txt.length > 0 && txt.length < 10 && /^\d+$/.test(txt)) {
-                                const num = Number(txt);
-                                if (num > 0) {
-                                    likes = num;
-                                    break;
-                                }
-                            }
-                        }
-
-                        let comments = 0;
-                        let shares = 0;
-                        const footer = [...el.querySelectorAll('div[role="button"], a, span')];
-                        for (const item of footer) {
-                            const txt = (item.innerText || "").trim();
-                            if (/^\d+\s+comments?$/i.test(txt)) {
-                                comments = Number(txt.match(/\d+/)[0]);
-                            }
-                            if (/^\d+\s+shares?$/i.test(txt)) {
-                                shares = Number(txt.match(/\d+/)[0]);
-                            }
-                        }
-
-                        const videoEl = el.querySelector('video');
-                        const video = videoEl ? (videoEl.getAttribute('src') || "Embedded Video Present") : "None";
-
-                        const imgEls = Array.from(el.querySelectorAll('img'));
-                        const images = [];
-                        for (const img of imgEls) {
-                            const src = img.getAttribute('src') || "";
-                            if (
-                                src &&
-                                src.startsWith("http") &&
-                                !src.includes("rsrc.php") &&
-                                !src.includes("emoji") &&
-                                !src.includes("avatar") &&
-                                !src.includes("sticker") &&
-                                !src.includes("p32x32") &&
-                                !src.includes("p16x16") &&
-                                !src.includes("p50x50") &&
-                                !src.includes("s60x60") &&
-                                !src.includes("badges") &&
-                                !src.includes("profile") &&
-                                !src.includes("reaction") &&
-                                !src.includes("fb_icon") &&
-                                !src.includes("spis_") &&
-                                !src.includes("x1bwp2qo") &&
-                                !src.includes("spacer") &&
-                                !src.includes("cover")
-                            ) {
-                                const w = img.getAttribute('width');
-                                const h = img.getAttribute('height');
-                                if ((w && parseInt(w) < 150) || (h && parseInt(h) < 150)) continue;
-                                images.push(src);
-                            }
-                        }
-
-                        return { permalinkObj, bodyText, author, likes, comments, shares, video, images };
-                    }).catch(async () => {
-                        return await targetPage.evaluate(() => {
-                            return null;
-                        });
-                    });
+                    data = await extractMetadata(feedUnit);
                 }
             }
 
@@ -1030,7 +784,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             }
 
             const isDuplicate = hasPerm || hasTemp;
-            const decision = isDuplicate ? "SKIP_DUPLICATE" : "PROCESS_NEW_POST";
+            const decision = isDuplicate ? "UPDATE_EXISTING" : "PROCESS_NEW_POST";
 
             console.log("--------------------------------\n");
             console.log(`Facebook Post ID:\n${facebookPostId || "N/A"}\n`);
@@ -1061,12 +815,12 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     stopGroup = true;
                     break;
                 }
-                continue;
+                // Do NOT continue. We want to update it.
+            } else {
+                duplicateCount = 0;
             }
 
-            duplicateCount = 0;
-
-            if (isUpdateCase) {
+            if (isUpdateCase && !isDuplicate) {
                 // When a real facebook_post_id is discovered for a previously saved temporary_id, perform an UPDATE in Supabase.
                 try {
                     const updateRes = await updatePostPermalinkInSupabase(temporaryId, permalink, facebookPostId);
@@ -1146,6 +900,45 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             };
             
             data.bodyText = cleanFacebookBody(data.bodyText || "");
+            
+            function parseFacebookDate(dateStr) {
+                if (!dateStr || dateStr.toLowerCase() === "today") return new Date().toISOString();
+                let d = new Date();
+                dateStr = dateStr.trim().toLowerCase();
+                
+                if (dateStr.includes("just now")) return d.toISOString();
+                
+                const mMatch = dateStr.match(/^(\d+)\s*m/);
+                if (mMatch) { d.setMinutes(d.getMinutes() - parseInt(mMatch[1])); return d.toISOString(); }
+                
+                const hMatch = dateStr.match(/^(\d+)\s*h/);
+                if (hMatch) { d.setHours(d.getHours() - parseInt(hMatch[1])); return d.toISOString(); }
+                
+                const dMatch = dateStr.match(/^(\d+)\s*d/);
+                if (dMatch) { d.setDate(d.getDate() - parseInt(dMatch[1])); return d.toISOString(); }
+
+                if (dateStr.includes("yesterday")) {
+                    d.setDate(d.getDate() - 1);
+                    const tMatch = dateStr.match(/at (\d+):(\d+)\s*(am|pm)/i);
+                    if (tMatch) {
+                        let [_, h, m, ampm] = tMatch;
+                        h = parseInt(h);
+                        if (ampm === "pm" && h !== 12) h += 12;
+                        if (ampm === "am" && h === 12) h = 0;
+                        d.setHours(h, parseInt(m), 0, 0);
+                    }
+                    return d.toISOString();
+                }
+                
+                const parsed = new Date(dateStr.replace(' at ', ' '));
+                if (!isNaN(parsed.getTime())) {
+                    if (parsed.getFullYear() === 2001) parsed.setFullYear(new Date().getFullYear());
+                    if (parsed > new Date()) parsed.setFullYear(parsed.getFullYear() - 1);
+                    return parsed.toISOString();
+                }
+                
+                return d.toISOString();
+            }
 
             const postObj = {
                 id: permalink,
@@ -1153,14 +946,30 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 group_url: group.url,
                 group_id: groupId,
                 author: data.author,
+                author_profile_url: data.author_profile_url,
+                author_avatar: data.author_avatar,
                 body: data.bodyText,
+                post_time_text: timestamp,
+                post_created_at: parseFacebookDate(timestamp),
                 post_date: timestamp,
                 permalink: data.permalinkObj ? permalink : null,
+                post_url: data.permalinkObj ? permalink : null,
                 likes: data.likes || 0,
                 comments: data.comments || 0,
                 shares: data.shares || 0,
-                screenshot: null,
+                reaction_count: data.likes || 0,
+                comment_count: data.comments || 0,
+                share_count: data.shares || 0,
                 images: imageUrls,
+                image_count: data.images ? data.images.length : 0,
+                video_urls: data.video_urls || [],
+                video_thumbnail: data.video_thumbnail || null,
+                video_duration: data.video_duration || null,
+                video_count: data.video_count || 0,
+                has_video: data.has_video || false,
+                post_type: data.post_type || "text",
+                reaction_breakdown: data.reaction_breakdown || {},
+                comments_disabled: data.comments_disabled || false,
                 scraped_at: new Date().toISOString(),
                 temporary_id: temporaryId,
                 needs_permalink: !data.permalinkObj,

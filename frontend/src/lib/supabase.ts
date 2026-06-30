@@ -6,15 +6,29 @@ export interface Post {
   group_url?: string;
   group_id?: string;
   author?: string;
+  author_profile_url?: string;
+  author_avatar?: string;
   body?: string;
   post_date?: string;
+  post_time_text?: string;
+  post_created_at?: string;
   date?: string;
   permalink?: string;
+  post_url?: string;
   likes?: number;
   comments?: number;
   shares?: number;
+  reaction_count?: number;
+  comment_count?: number;
+  share_count?: number;
   screenshot?: string;
   images?: any;
+  video_urls?: string[];
+  video_thumbnail?: string;
+  video_duration?: string;
+  video_count?: number;
+  has_video?: boolean;
+  post_type?: string;
   scraped_at?: string;
   temporary_id?: string;
   needs_permalink?: boolean;
@@ -61,4 +75,47 @@ export function formatDate(dateStr?: string): string {
   } catch (e) {
     return dateStr;
   }
+}
+
+export function getDisplayDate(post: Post): string {
+  const dateToFormat = post.post_created_at || post.post_date || post.date;
+  
+  if (dateToFormat) {
+    try {
+      const d = new Date(dateToFormat);
+      if (!isNaN(d.getTime())) {
+        const now = new Date();
+        const diffMs = now.getTime() - d.getTime();
+        const diffSecs = Math.floor(diffMs / 1000);
+        const diffMins = Math.floor(diffSecs / 60);
+        const diffHrs = Math.floor(diffMins / 60);
+        const diffDays = Math.floor(diffHrs / 24);
+
+        if (diffSecs < 60) return 'Just now';
+        if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+        if (diffHrs < 24) return `${diffHrs} hour${diffHrs > 1 ? 's' : ''} ago`;
+        
+        if (diffDays === 1) return 'Yesterday';
+        if (diffDays > 1 && diffDays < 7) return `${diffDays} days ago`;
+        
+        return new Intl.DateTimeFormat('en-US', {
+          year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+          month: 'short',
+          day: 'numeric'
+        }).format(d);
+      }
+    } catch (e) {
+      // Ignore and fallback
+    }
+  }
+
+  if (post.post_time_text && post.post_time_text.trim() !== "") {
+    return post.post_time_text;
+  }
+  
+  if (post.scraped_at) {
+    return formatDate(post.scraped_at);
+  }
+  
+  return 'Unknown date';
 }

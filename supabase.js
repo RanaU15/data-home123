@@ -206,8 +206,24 @@ async function upsertPostToSupabase(posts) {
                                 likes: post.likes,
                                 comments: post.comments,
                                 shares: post.shares,
-                                screenshot: post.screenshot,
+                                reaction_count: post.reaction_count,
+                                comment_count: post.comment_count,
+                                share_count: post.share_count,
+                                reaction_breakdown: post.reaction_breakdown,
+                                comments_disabled: post.comments_disabled,
                                 images: post.images,
+                                image_count: post.image_count,
+                                video_urls: post.video_urls,
+                                video_thumbnail: post.video_thumbnail,
+                                video_duration: post.video_duration,
+                                video_count: post.video_count,
+                                has_video: post.has_video,
+                                post_type: post.post_type,
+                                author_avatar: post.author_avatar,
+                                author_profile_url: post.author_profile_url,
+                                post_url: post.post_url,
+                                post_created_at: post.post_created_at,
+                                post_time_text: post.post_time_text,
                                 scraped_at: post.scraped_at
                             })
                             .eq("id", temp.id);
@@ -222,14 +238,30 @@ async function upsertPostToSupabase(posts) {
             group_url: post.group_url,
             group_id: post.group_id,
             author: post.author,
+            author_profile_url: post.author_profile_url,
+            author_avatar: post.author_avatar,
             body: post.body,
             post_date: post.post_date,
+            post_created_at: post.post_created_at,
+            post_time_text: post.post_time_text,
             permalink: post.permalink,
+            post_url: post.post_url,
             likes: post.likes,
             comments: post.comments,
             shares: post.shares,
-            screenshot: post.screenshot,
+            reaction_count: post.reaction_count,
+            comment_count: post.comment_count,
+            share_count: post.share_count,
+            reaction_breakdown: post.reaction_breakdown,
+            comments_disabled: post.comments_disabled,
             images: post.images,
+            image_count: post.image_count,
+            video_urls: post.video_urls,
+            video_thumbnail: post.video_thumbnail,
+            video_duration: post.video_duration,
+            video_count: post.video_count,
+            has_video: post.has_video,
+            post_type: post.post_type,
             scraped_at: post.scraped_at,
             temporary_id: post.temporary_id,
             needs_permalink: post.needs_permalink,
@@ -240,7 +272,7 @@ async function upsertPostToSupabase(posts) {
             .from("posts")
             .upsert(cleanPosts, {
                 onConflict: "id",
-                ignoreDuplicates: true
+                ignoreDuplicates: false // Changed to false to allow updating existing records
             });
 
         if (error) {
