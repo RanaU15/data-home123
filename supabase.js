@@ -135,6 +135,37 @@ async function uploadImageToSupabase(fileBuffer, storagePath, contentType = 'ima
 }
 
 /**
+ * Upload a video buffer to Supabase Storage 'videos' bucket.
+ */
+async function uploadVideoToSupabase(fileBuffer, storagePath, contentType = 'video/mp4') {
+    if (!supabase) return null;
+    try {
+        if (!fileBuffer) return null;
+
+        const { data, error } = await supabase.storage
+            .from("videos")
+            .upload(storagePath, fileBuffer, {
+                contentType,
+                upsert: true
+            });
+
+        if (error) {
+            console.error(`❌ Supabase Storage video upload error for ${storagePath}:`, error.message);
+            return { error };
+        }
+
+        const { data: { publicUrl } } = supabase.storage
+            .from("videos")
+            .getPublicUrl(storagePath);
+
+        return { publicUrl, storagePath };
+    } catch (err) {
+        console.error(`❌ Unexpected Storage video upload error:`, err.message);
+        return { error: err };
+    }
+}
+
+/**
  * Remove an uploaded image from Supabase Storage (used for rollback).
  */
 async function deleteImageFromSupabase(storagePath) {
@@ -357,6 +388,7 @@ module.exports = {
     deletePostFromSupabase,
     getExistingPermalinksForGroup,
     uploadImageToSupabase,
+    uploadVideoToSupabase,
     deleteImageFromSupabase,
     normalizeFacebookPostId,
     checkDuplicateInSupabase

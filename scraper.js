@@ -12,6 +12,7 @@ const {
     deletePostFromSupabase,
     getExistingPermalinksForGroup,
     uploadImageToSupabase,
+    uploadVideoToSupabase,
     deleteImageFromSupabase,
     normalizeFacebookPostId,
     checkDuplicateInSupabase
@@ -49,6 +50,20 @@ let context = null;
 let page = null;
 let isScraping = false;
 let isShuttingDown = false;
+let processedIndex = 0;
+
+function getVideoSignature(urlStr) {
+    try {
+        const urlObj = new URL(urlStr);
+        const parts = urlObj.pathname.split('/').pop().split('_');
+        if (parts.length >= 3 && parts[1].length > 8 && !isNaN(parts[1])) {
+            return parts[1]; // The asset ID
+        }
+        return urlObj.pathname; // Fallback to full path if pattern doesn't match
+    } catch (e) {
+        return urlStr.split('?')[0];
+    }
+}
 
 let globalAllPostsData = [];
 
@@ -76,27 +91,40 @@ function updateHealthStatus(updates) {
     } catch (err) { }
 }
 
-// Helper function to download images into memory
-function downloadToBuffer(url) {
-    return new Promise((resolve) => {
-        const client = url.startsWith("https") ? https : http;
-        client.get(url, res => {
-            if (res.statusCode !== 200) {
-                res.resume();
-                return resolve(null);
+// Helper function to download into memory with up to 3 retries
+async function downloadToBuffer(url, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const buffer = await new Promise((resolve, reject) => {
+                const client = url.startsWith("https") ? https : http;
+                const req = client.get(url, { timeout: 30000 }, res => {
+                    if (res.statusCode !== 200 && res.statusCode !== 206) {
+                        res.resume();
+                        return reject(new Error(`Status Code: ${res.statusCode}`));
+                    }
+                    const data = [];
+                    res.on('data', chunk => data.push(chunk));
+                    res.on('end', () => resolve(Buffer.concat(data)));
+                    res.on('error', err => reject(err));
+                });
+                req.on('timeout', () => {
+                    req.destroy();
+                    reject(new Error('Request timeout'));
+                });
+                req.on('error', err => reject(err));
+            });
+            console.log(`Download success\nFile size: ${buffer.length}`);
+            return buffer;
+        } catch (error) {
+            console.warn(`Download attempt ${i + 1} failed for ${url.substring(0, 50)}...: ${error.message}`);
+            if (i === retries - 1) {
+                console.warn(`All ${retries} download attempts failed.`);
+                return null;
             }
-            const data = [];
-            res.on('data', chunk => data.push(chunk));
-            res.on('end', () => {
-                resolve(Buffer.concat(data));
-            });
-            res.on('error', () => {
-                resolve(null);
-            });
-        }).on("error", () => {
-            resolve(null);
-        });
-    });
+            await new Promise(res => setTimeout(res, 1000 * (i + 1))); // Exponential backoff
+        }
+    }
+    return null;
 }
 
 // Clean and normalize permalinks by removing tracking parameters
@@ -293,7 +321,11 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     let bodyText = "";
                     let selectorMatched = false;
                     
-                    const textBlocks = Array.from(el.querySelectorAll('div[dir="auto"]'));
+                    let textBlocks = Array.from(el.querySelectorAll('div[data-ad-comet-preview="message"], div[data-ad-preview="message"]'));
+                    if (textBlocks.length === 0) {
+                        const allAuto = Array.from(el.querySelectorAll('div[dir="auto"]'));
+                        textBlocks = allAuto.filter(auto => !auto.parentElement || !auto.parentElement.closest('div[dir="auto"]'));
+                    }
                     if (textBlocks.length > 0) selectorMatched = true;
                     
                     const seenTexts = new Set();
@@ -335,7 +367,11 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     let bodyText = "";
                     const container = document.querySelector('div[role="main"]') || document.querySelector('article') || document.body;
                     
-                    const textBlocks = Array.from(container.querySelectorAll('div[dir="auto"]'));
+                    let textBlocks = Array.from(container.querySelectorAll('div[data-ad-comet-preview="message"], div[data-ad-preview="message"]'));
+                    if (textBlocks.length === 0) {
+                        const allAuto = Array.from(container.querySelectorAll('div[dir="auto"]'));
+                        textBlocks = allAuto.filter(auto => !auto.parentElement || !auto.parentElement.closest('div[dir="auto"]'));
+                    }
                     
                     const seenTexts = new Set();
                     let paragraphs = [];
@@ -371,6 +407,91 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 }).catch(() => "");
             };
 
+            const postNetworkState = {
+                capturedVideoCandidates: [],
+                capturedVideoThumbnails: new Set(),
+                capturedVideoSignatures: new Set(),
+                totalVideoRequests: 0,
+                uniqueVideos: 0,
+            };
+
+            const diagnosticLogs = {
+                cardProcessingStart: Date.now(),
+                firstMp4Intercepted: null,
+                metadataExtractionStart: null,
+                cardProcessingEnd: null,
+                listenerAttached: true,
+                mp4Intercepted: false,
+                videoElementsCount: 0,
+                dataVideoIdCount: 0,
+                dataStoreVideoCount: 0,
+                posterExists: false,
+                clearedStatus: 'Not cleared'
+            };
+
+            const responseListener = async (res) => {
+                try {
+                    const url = res.url();
+                    const resourceType = res.request().resourceType();
+                    
+                    const isMp4ByUrl = url.includes('.mp4') && url.includes('video') && url.includes('fbcdn.net');
+                    let isMp4ByHeader = false;
+                    let cType = null;
+                    
+                    if (!isMp4ByUrl && (resourceType === 'media' || resourceType === 'fetch' || resourceType === 'xhr')) {
+                        cType = await res.headerValue('content-type').catch(() => null);
+                        if (cType && (cType.includes('video/mp4') || cType.includes('video/'))) {
+                            if (url.includes('fbcdn.net') && !url.includes('spacer')) {
+                                isMp4ByHeader = true;
+                            }
+                        }
+                    }
+
+                    if (isMp4ByUrl || isMp4ByHeader) {
+                        if (!diagnosticLogs.firstMp4Intercepted) diagnosticLogs.firstMp4Intercepted = Date.now();
+                        diagnosticLogs.mp4Intercepted = true;
+                        postNetworkState.totalVideoRequests++;
+                        
+                        const headers = res.headers();
+                        const status = res.status();
+                        const contentLength = parseInt(headers['content-length'] || '0', 10);
+                        const contentRange = headers['content-range'] || null;
+                        const acceptRanges = headers['accept-ranges'] || null;
+
+                        postNetworkState.capturedVideoCandidates.push({
+                            url,
+                            contentLength,
+                            contentRange,
+                            acceptRanges,
+                            status,
+                            headers
+                        });
+                    }
+                    
+                    if (resourceType === 'image' || resourceType === 'fetch' || resourceType === 'xhr') {
+                        if (url.includes('fbcdn.net') || url.includes('scontent.xx.fbcdn.net') || url.match(/scontent\.fraj.*\.fbcdn\.net/)) {
+                            if (url.includes('t15.') || url.includes('video_preview') || url.includes('video') || url.includes('poster')) {
+                                if (url.includes('.jpg') || url.includes('.jpeg') || url.includes('.webp') || url.includes('.png')) {
+                                    postNetworkState.capturedVideoThumbnails.add(url);
+                                    console.log(`Video thumbnail intercepted`);
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {}
+            };
+
+            targetPage.on('response', responseListener);
+
+            const cleanupNetworkListener = () => {
+                diagnosticLogs.listenerAttached = false;
+                targetPage.off('response', responseListener);
+                postNetworkState.capturedVideoCandidates = [];
+                postNetworkState.capturedVideoThumbnails.clear();
+                postNetworkState.capturedVideoSignatures.clear();
+                diagnosticLogs.clearedStatus = 'Cleared after processing';
+            };
+
             console.log("\n----------------------------------------");
             console.log("Found feed card\n");
             
@@ -381,6 +502,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 console.log("Skipped card:\nNo body extracted.");
                 console.log("----------------------------------------\n");
                 processedIndex = i + 1;
+                cleanupNetworkListener();
                 continue;
             }
 
@@ -483,7 +605,8 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                         if (messageEl && messageEl.innerText.trim()) {
                             bodyText = messageEl.innerText.replace(/See translation\n?/g, '').trim();
                         } else {
-                            const textBlocks = Array.from(el.querySelectorAll('div[dir="auto"]'));
+                            const allAuto = Array.from(el.querySelectorAll('div[dir="auto"]'));
+                            const textBlocks = allAuto.filter(auto => !auto.parentElement || !auto.parentElement.closest('div[dir="auto"]'));
                             for (const block of textBlocks) {
                                 const txt = block.innerText || "";
                                 if (txt.includes("Like") || txt.includes("Reply") || txt.includes("Share") || txt.includes("Comment") || txt.includes("Send") || txt.includes("Write a comment")) break;
@@ -552,18 +675,53 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                         if (/^\d+\s+shares?$/i.test(txt)) shares = Number(txt.match(/\d+/)[0]);
                     }
 
-                    const videoEls = Array.from(el.querySelectorAll('video'));
-                    const video_urls = videoEls.map(v => v.getAttribute('src')).filter(Boolean);
+                    let rawVideoEls = Array.from(el.querySelectorAll('video'));
+                    let dataVideoIdEls = Array.from(el.querySelectorAll('[data-video-id]'));
+                    let dataStoreVideoEls = Array.from(el.querySelectorAll('[data-store*="video"]'));
+                    
+                    let diagnosticInfo = {
+                        videoElementsCount: rawVideoEls.length,
+                        dataVideoIdCount: dataVideoIdEls.length,
+                        dataStoreVideoCount: dataStoreVideoEls.length,
+                        posterExists: [...rawVideoEls, ...dataVideoIdEls, ...dataStoreVideoEls].some(v => v.hasAttribute('poster'))
+                    };
+
+                    let videoEls = Array.from(el.querySelectorAll('video, [data-video-id], [data-store*="video"]'));
+                    let video_urls = videoEls.map(v => v.getAttribute('src') || v.getAttribute('data-video-id')).filter(Boolean);
                     const has_video = video_urls.length > 0;
                     const video_count = video_urls.length;
                     
-                    let video_thumbnail = null;
-                    const possibleThumbnails = el.querySelectorAll('img');
+                    let video_extraction_method = "None";
                     if (has_video) {
-                        for(let t of possibleThumbnails) {
-                            if(t.closest('div[data-video-id]') || t.className.includes('video')) {
-                                video_thumbnail = t.getAttribute('src');
+                        if (el.querySelector('video[src]')) video_extraction_method = "DOM src";
+                        else if (el.querySelector('[data-video-id]')) video_extraction_method = "data-video-id";
+                        else if (el.querySelector('[data-store*="video"]')) video_extraction_method = "data-store";
+                    }
+
+                    let video_thumbnail = null;
+                    if (has_video) {
+                        for (const v of videoEls) {
+                            const poster = v.getAttribute('poster');
+                            if (poster && poster.startsWith('http')) {
+                                video_thumbnail = poster;
                                 break;
+                            }
+                        }
+
+                        if (!video_thumbnail) {
+                            const possibleThumbnails = el.querySelectorAll('img');
+                            for(let t of possibleThumbnails) {
+                                const src = t.getAttribute('src');
+                                if (!src || !src.startsWith('http') || src.includes('rsrc.php') || src.includes('emoji') || src.includes('avatar') || src.includes('sticker') || src.includes('reaction') || src.includes('fb_icon')) continue;
+                                
+                                const w = t.getAttribute('width');
+                                const h = t.getAttribute('height');
+                                if ((w && parseInt(w) < 150) || (h && parseInt(h) < 150)) continue;
+                                
+                                if(src.includes('fbcdn.net')) {
+                                    video_thumbnail = src;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -594,19 +752,30 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     return { 
                         permalinkObj, bodyText, author, author_profile_url, author_avatar, 
                         likes, comments, shares, video, video_urls, video_thumbnail, 
-                        video_duration, video_count, has_video, images, post_type,
-                        reaction_breakdown, comments_disabled
+                        video_duration, video_count, has_video, video_extraction_method, images, post_type,
+                        reaction_breakdown, comments_disabled, diagnosticInfo
                     };
                 }, passedBody).catch(() => null);
             };
 
             // 1. Extract metadata & permalink
+            diagnosticLogs.metadataExtractionStart = Date.now();
             let data = await extractMetadata(feedUnit, finalBody);
 
             if (!data) {
                 console.log("Skipped");
                 processedIndex = i + 1;
+                cleanupNetworkListener();
                 continue;
+            }
+            
+            if (data.has_video) {
+                console.log("Video detected");
+                if (data.video_extraction_method) {
+                    console.log(`Video extracted using:\n${data.video_extraction_method}`);
+                }
+            } else {
+                console.log("No video detected");
             }
 
             // Completely skip Facebook feed sorting widgets (Most Relevant, Most recent, New activity, Suggested for you) or empty body
@@ -615,11 +784,13 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             if (checkAuthor === "most relevant" || checkAuthor === "most recent" || checkAuthor === "new activity" || checkAuthor === "suggested for you") {
                 console.log("Skipped fake feed card");
                 processedIndex = i + 1;
+                cleanupNetworkListener();
                 continue;
             }
             if (checkBody === "") {
                 console.log("Skipped empty card");
                 processedIndex = i + 1;
+                cleanupNetworkListener();
                 continue;
             }
 
@@ -664,6 +835,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
             if ((tempFacebookPostId && scrapedThisRun.has(tempFacebookPostId)) || scrapedThisRun.has(tempTemporaryId)) {
                 processedIndex = i + 1;
+                cleanupNetworkListener();
                 continue;
             }
 
@@ -690,6 +862,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             if (!data) {
                 console.log("Skipped");
                 processedIndex = i + 1;
+                cleanupNetworkListener();
                 continue;
             }
 
@@ -707,8 +880,10 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 if (oldPostCount >= 5) {
                     console.log("Group stopped because 5 consecutive old posts found.");
                     stopGroup = true;
+                    cleanupNetworkListener();
                     break;
                 }
+                cleanupNetworkListener();
                 continue;
             } else {
                 oldPostCount = 0;
@@ -851,6 +1026,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 if (duplicateCount >= 4) {
                     console.log("Group stopped because 4 consecutive duplicates found.");
                     stopGroup = true;
+                    cleanupNetworkListener();
                     break;
                 }
                 // Do NOT continue. We want to update it.
@@ -877,6 +1053,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     updateHealthStatus({ last_error: err.message });
                 }
                 processedIndex = i + 1;
+                cleanupNetworkListener();
                 continue;
             }
 
@@ -907,6 +1084,172 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     }
                 }
             }
+
+            const uploadedVideoUrls = [];
+            const uploadedVideoPaths = [];
+
+            if (data.has_video && postNetworkState.capturedVideoCandidates.length > 0) {
+                console.log(`\n--- VIDEO CANDIDATES ---`);
+                
+                let validCandidates = [];
+                for (const candidate of postNetworkState.capturedVideoCandidates) {
+                    let selected = "NO";
+                    let reason = "";
+                    
+                    if (candidate.url.includes('init.mp4') || candidate.url.includes('dash')) {
+                        reason = "Ignored: initialization segment";
+                    } else if (candidate.contentLength < 500000) {
+                        reason = `Ignored: Size < 500KB (${candidate.contentLength} bytes)`;
+                    } else if (candidate.status === 206) {
+                        if (candidate.contentRange && candidate.contentRange.startsWith('bytes 0-')) {
+                            const match = candidate.contentRange.match(/bytes 0-(\d+)\/(\d+)/);
+                            if (match && match[1] === (parseInt(match[2]) - 1).toString()) {
+                                selected = "YES";
+                                reason = "Valid complete 206 response";
+                                validCandidates.push(candidate);
+                            } else {
+                                reason = `Ignored: Partial 206 response (${candidate.contentRange})`;
+                            }
+                        } else {
+                            reason = `Ignored: Partial 206 response (No/Invalid Content-Range)`;
+                        }
+                    } else if (candidate.status === 200) {
+                        selected = "YES";
+                        reason = "Valid 200 complete response";
+                        validCandidates.push(candidate);
+                    } else {
+                        reason = `Ignored: Status ${candidate.status}`;
+                    }
+                    
+                    console.log(`URL: ${candidate.url.substring(0, 70)}...`);
+                    console.log(`Content-Length: ${candidate.contentLength}`);
+                    console.log(`Status: ${candidate.status}`);
+                    console.log(`Selected: ${selected}`);
+                    console.log(`Reason: ${reason}\n`);
+                }
+                
+                let videoUrlArray = [];
+                if (validCandidates.length > 0) {
+                    validCandidates.sort((a, b) => b.contentLength - a.contentLength);
+                    const uniqueSignatures = new Set();
+                    for (const cand of validCandidates) {
+                        const sig = getVideoSignature(cand.url);
+                        if (!uniqueSignatures.has(sig)) {
+                            uniqueSignatures.add(sig);
+                            videoUrlArray.push(cand);
+                            if (videoUrlArray.length >= (data.video_count || 1)) break;
+                        }
+                    }
+                }
+                
+                for (let v = 0; v < videoUrlArray.length; v++) {
+                    const candidate = videoUrlArray[v];
+                    const actualVideoUrl = candidate.url;
+                    const vidFilename = `post_${groupId}_${Date.now()}_${v + 1}.mp4`;
+                    
+                    console.log(`Downloading video...`);
+                    const vidBuffer = await downloadToBuffer(actualVideoUrl);
+                    if (vidBuffer) {
+                        if (vidBuffer.length >= 500000) {
+                            console.log(`Uploading video (Verified Size: ${vidBuffer.length} bytes)...`);
+                            const uploadResult = await uploadVideoToSupabase(vidBuffer, `videos/${vidFilename}`);
+                            if (uploadResult && uploadResult.publicUrl) {
+                                console.log(`Video uploaded\nPublic URL:\n${uploadResult.publicUrl}`);
+                                uploadedVideoUrls.push(uploadResult.publicUrl);
+                                uploadedVideoPaths.push(uploadResult.storagePath);
+                            } else {
+                                console.warn(`Video upload failed`);
+                            }
+                        } else {
+                            console.warn(`Video download failed verification: Size ${vidBuffer.length} bytes < 500KB`);
+                        }
+                    } else {
+                        console.warn(`Video download failed`);
+                    }
+                }
+                console.log(`Videos uploaded: ${uploadedVideoUrls.length}`);
+                console.log(`--- END VIDEO CANDIDATES ---\n`);
+            }
+
+            if (uploadedVideoUrls.length > 0) {
+                console.log(`Final saved videos: ${uploadedVideoUrls.length}`);
+                data.video_urls = uploadedVideoUrls;
+                data.video = uploadedVideoUrls[0]; 
+                data.has_video = true;
+                data.video_count = uploadedVideoUrls.length;
+                if (data.post_type === 'image' && data.images.length > 0) {
+                    data.post_type = 'mixed';
+                } else if (data.post_type === 'text') {
+                    data.post_type = uploadedVideoUrls.length > 1 ? 'multiple_videos' : 'video';
+                }
+            } else if (data.has_video) {
+                data.video_urls = [];
+                data.has_video = false;
+                data.video = "None";
+                if (data.post_type === 'video' || data.post_type === 'multiple_videos' || data.post_type === 'mixed') {
+                    data.post_type = data.images.length > 1 ? 'multiple_images' : (data.images.length === 1 ? 'image' : 'text');
+                }
+            }
+            
+            // Process Video Thumbnail
+            if (data.has_video || uploadedVideoUrls.length > 0) {
+                let thumbnailSource = "";
+                
+                // If not found in DOM via poster (Priority 1), check network (Priority 2)
+                if (!data.video_thumbnail && postNetworkState.capturedVideoThumbnails.size > 0) {
+                    const thumbArray = Array.from(postNetworkState.capturedVideoThumbnails);
+                    data.video_thumbnail = thumbArray[0];
+                    thumbnailSource = "network";
+                    console.log("Video thumbnail captured from network");
+                } else if (data.video_thumbnail) {
+                    console.log("Video poster found / Video thumbnail extracted from DOM");
+                } else {
+                    console.log("No thumbnail available");
+                }
+                
+                if (data.video_thumbnail && data.video_thumbnail.startsWith('http')) {
+                    const thumbFilename = `thumb_${groupId}_${Date.now()}.jpg`;
+                    const thumbBuffer = await downloadToBuffer(data.video_thumbnail);
+                    if (thumbBuffer) {
+                        const uploadResult = await uploadImageToSupabase(thumbBuffer, `post_images/${thumbFilename}`, 'image/jpeg');
+                        if (uploadResult && uploadResult.publicUrl) {
+                            console.log(`Thumbnail uploaded`);
+                            data.video_thumbnail = uploadResult.publicUrl;
+                        } else {
+                            console.warn("Thumbnail upload failed");
+                        }
+                    } else {
+                        console.warn("Thumbnail upload failed");
+                    }
+                } else {
+                    data.video_thumbnail = null;
+                }
+            }
+
+            cleanupNetworkListener();
+            
+            diagnosticLogs.cardProcessingEnd = Date.now();
+            if (data && data.diagnosticInfo) {
+                diagnosticLogs.videoElementsCount = data.diagnosticInfo.videoElementsCount;
+                diagnosticLogs.dataVideoIdCount = data.diagnosticInfo.dataVideoIdCount;
+                diagnosticLogs.dataStoreVideoCount = data.diagnosticInfo.dataStoreVideoCount;
+                diagnosticLogs.posterExists = data.diagnosticInfo.posterExists;
+            }
+
+            console.log("\n=== PIPELINE AUDIT DIAGNOSTICS ===");
+            console.log(`1. Number of <video> elements found: ${diagnosticLogs.videoElementsCount}`);
+            console.log(`2. Number of [data-video-id] elements found: ${diagnosticLogs.dataVideoIdCount}`);
+            console.log(`3. Number of elements with data-store containing "video": ${diagnosticLogs.dataStoreVideoCount}`);
+            console.log(`4. Whether a poster attribute exists: ${diagnosticLogs.posterExists}`);
+            console.log(`5. MP4 requests intercepted during card: ${diagnosticLogs.mp4Intercepted}`);
+            console.log(`6. Timestamps:`);
+            console.log(`   - Card processing start: ${diagnosticLogs.cardProcessingStart}`);
+            console.log(`   - First MP4 intercepted: ${diagnosticLogs.firstMp4Intercepted || 'None'}`);
+            console.log(`   - Metadata extraction: ${diagnosticLogs.metadataExtractionStart || 'None'}`);
+            console.log(`   - Card processing end: ${diagnosticLogs.cardProcessingEnd}`);
+            console.log(`7. Network listener still attached: ${diagnosticLogs.listenerAttached}`);
+            console.log(`8. Cleared arrays status: ${diagnosticLogs.clearedStatus}`);
+            console.log("==================================\n");
 
             if (uploadedCount > 0) {
                 console.log(`Uploaded ${uploadedCount} images from memory`);
@@ -1021,6 +1364,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 }
                 console.log("Saved to Supabase");
                 console.log("Saved new post");
+                console.log(`Database updated\nhas_video: ${postObj.has_video}\nvideo_urls: ${JSON.stringify(postObj.video_urls)}\nvideo_thumbnail: ${postObj.video_thumbnail}`);
 
                 // After every successful save, immediately add both facebook_post_id and temporary_id into the in-memory Set so duplicates later in the same cycle are skipped.
                 if (facebookPostId) {

@@ -151,16 +151,37 @@ function renderPosts() {
 
         // Generate media images HTML
         let mediaHtml = "";
-        if (post.images && post.images.length > 0) {
+        
+        let hasVideos = false;
+        let videoHtml = "";
+        if (post.video_urls && Array.isArray(post.video_urls) && post.video_urls.length > 0) {
+            hasVideos = true;
+            videoHtml = `<div class="post-media video-container" style="border-radius: 8px; overflow: hidden; background: #000; margin-bottom: 8px;">
+                <video controls preload="metadata" style="width: 100%; max-height: 300px;">
+                    <source src="${post.video_urls[0]}" type="video/mp4" />
+                </video>
+            </div>`;
+        } else if (post.video && post.video !== "None") {
+            hasVideos = true;
+            videoHtml = `<div class="post-media video-container" style="border-radius: 8px; overflow: hidden; background: #000; margin-bottom: 8px;">
+                <video controls preload="metadata" style="width: 100%; max-height: 300px;">
+                    <source src="${post.video}" type="video/mp4" />
+                </video>
+            </div>`;
+        }
+        
+        if (hasVideos) {
+            mediaHtml = videoHtml;
+        } else if (post.images && post.images.length > 0) {
             mediaHtml = `<div class="post-media">`;
             post.images.forEach(img => {
                 // Ensure correct image path
-                const imgSrc = img.startsWith("images/") ? `/${img}` : `/images/${img.replace("images/", "")}`;
+                const imgSrc = img.startsWith("images/") ? `/${img}` : (img.startsWith("http") ? img : `/images/${img.replace("images/", "")}`);
                 mediaHtml += `<img src="${imgSrc}" class="media-img" alt="Post image" data-full="${imgSrc}">`;
             });
             mediaHtml += `</div>`;
         } else if (post.screenshot) {
-            const screenSrc = post.screenshot.startsWith("images/") ? `/${post.screenshot}` : `/images/${post.screenshot.replace("images/", "")}`;
+            const screenSrc = post.screenshot.startsWith("images/") ? `/${post.screenshot}` : (post.screenshot.startsWith("http") ? post.screenshot : `/images/${post.screenshot.replace("images/", "")}`);
             mediaHtml = `
                 <div class="post-media">
                     <img src="${screenSrc}" class="media-img" alt="Post screenshot" data-full="${screenSrc}">
