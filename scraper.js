@@ -1,6 +1,7 @@
 const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
+require("dotenv").config();
 const https = require("https");
 const http = require("http");
 const crypto = require("crypto");
@@ -169,32 +170,69 @@ function isTodayPost(timestamp) {
     return false;
 }
 
-// Initialize or Recreate Browser
-async function initBrowser(isRestart = false) {
-    if (!fs.existsSync(SESSION_FILE)) {
-        console.error(`Session expired.\nRun npm run login.`);
-        updateHealthStatus({ running: false, last_error: "Session expired" });
+// Auto Login Function
+async function autoLogin() {
+    const email = process.env.FB_EMAIL;
+    const password = process.env.FB_PASSWORD;
+
+    if (!email || !password) {
+        console.error("Session expired and FB_EMAIL / FB_PASSWORD not found in environment. Please add them or run npm run login.");
+        updateHealthStatus({ running: false, last_error: "Session expired, no credentials provided" });
         process.exit(1);
     }
 
+    console.log("Attempting automatic login...");
+    await page.goto("https://www.facebook.com/login", { waitUntil: "domcontentloaded" });
+    
+    // Fill credentials
+    await page.fill('#email', email);
+    await page.fill('#pass', password);
+    await page.click('button[name="login"]');
+
+    console.log("Submitted login credentials, waiting for navigation...");
+    try {
+        await page.waitForURL(/.*facebook\.com\/(?!(login|.*login\.php)).*/, { timeout: 60000 });
+        console.log("Automatic login successful! Saving new session...");
+        await page.waitForTimeout(5000);
+        await context.storageState({ path: SESSION_FILE });
+        return true;
+    } catch (err) {
+        console.error("Automatic login failed! Please check your credentials or run npm run login manually.", err.message);
+        updateHealthStatus({ running: false, last_error: "Automatic login failed" });
+        process.exit(1);
+    }
+}
+
+// Initialize or Recreate Browser
+async function initBrowser(isRestart = false) {
     if (browser && browser.isConnected()) {
         await browser.close().catch(() => { });
     }
 
-    browser = await chromium.launch({ headless: false });
-    context = await browser.newContext({ storageState: SESSION_FILE });
+    const isCI = process.env.CI === 'true';
+    browser = await chromium.launch({ headless: isCI ? true : false });
+    
+    if (fs.existsSync(SESSION_FILE)) {
+        context = await browser.newContext({ storageState: SESSION_FILE });
+    } else {
+        context = await browser.newContext();
+    }
+    
     page = await context.newPage();
 }
 
 // Verify Facebook Session
 async function verifySession() {
     try {
+        if (!fs.existsSync(SESSION_FILE)) {
+             return await autoLogin();
+        }
+
         await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
         const currentUrl = page.url();
         if (currentUrl.includes("/login") || currentUrl.includes("login.php")) {
             console.error("Session expired. Redirected to login page.");
-            updateHealthStatus({ running: false, last_error: "Session expired" });
-            process.exit(1);
+            return await autoLogin();
         }
         return true;
     } catch (err) {
@@ -1221,6 +1259,16 @@ process.on("SIGINT", handleExit);
 process.on("SIGTERM", handleExit);
 
 // Initialize scraper scheduler
-console.log("Scheduler started");
-runScrapeCycle(); // Initial run immediately
-setInterval(runScrapeCycle, 30 * 60 * 1000);
+if (require.main === module) {
+    if (process.env.CI === 'true') {
+        console.log("Running in CI single-execution mode...");
+        runScrapeCycle().then(() => process.exit(0)).catch(() => process.exit(1));
+    } else {
+        console.log("Running in standalone scheduled mode...");
+        runScrapeCycle();
+        setInterval(runScrapeCycle, 30 * 60 * 1000);
+    }
+} else {
+    // Export for trigger-server.js — all existing logic above is unchanged
+    module.exports = { runScrapeCycle };
+}

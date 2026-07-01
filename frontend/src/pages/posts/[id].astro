@@ -1,6 +1,6 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { supabase, parseImages, getDisplayDate, type Post } from '../../lib/supabase';
+import { supabase, parseImages, getDisplayDate, parseVideoUrls, type Post } from '../../lib/supabase';
 
 const { id } = Astro.params;
 
@@ -56,6 +56,9 @@ if (post) {
   author = post.author || 'Unknown Author';
   groupName = post.group_name || post.group_id || 'Facebook Group';
   postDate = getDisplayDate(post);
+  
+  const parsedVideos = parseVideoUrls(post.video_urls);
+  post.video_urls = parsedVideos;
   
   permalink = post.permalink || '';
   if (!permalink.startsWith('http')) {
@@ -132,18 +135,39 @@ if (post) {
           </div>
         )}
 
-        {post?.has_video && post.video_urls && post.video_urls.length > 0 && (
+        {post?.has_video && (
           <div class="mt-6 border border-slate-200 rounded-2xl p-4 bg-white shadow-sm">
-            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Videos ({post.video_count})</h3>
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Videos ({post.video_count || 1})</h3>
             <div class="grid gap-4">
-              {post.video_urls.map((vUrl, vIdx) => (
-                <div class="overflow-hidden rounded-xl bg-slate-900 aspect-video relative group">
-                  <video controls preload="metadata" poster={post.video_thumbnail || ''} class="w-full h-full object-contain">
-                    <source src={vUrl} />
-                    Your browser does not support the video tag.
-                  </video>
+              {post.video_urls && post.video_urls.length > 0 ? (
+                post.video_urls.map((vUrl, vIdx) => {
+                  const isPlayable = vUrl.includes('.mp4') || vUrl.includes('.webm') || vUrl.includes('fbcdn.net/v/t');
+                  return isPlayable ? (
+                    <div class="overflow-hidden rounded-xl bg-slate-900 aspect-video relative group">
+                      <video controls preload="metadata" poster={post.video_thumbnail || ''} class="w-full h-full object-contain">
+                        <source src={vUrl} />
+                        Your browser does not support the video tag.
+                      </video>
+                    </div>
+                  ) : (
+                    <div class="overflow-hidden rounded-xl bg-slate-100 aspect-video relative group border border-slate-200 flex items-center justify-center">
+                      <img src={post.video_thumbnail || '/image (3).png'} alt="Video Thumbnail" class="absolute inset-0 w-full h-full object-cover opacity-80" />
+                      <a href={vUrl.startsWith('http') ? vUrl : permalink} target="_blank" rel="noopener noreferrer" class="relative z-10 flex items-center gap-2 bg-black/60 hover:bg-black/80 text-white px-5 py-3 rounded-full font-semibold transition-colors backdrop-blur-sm shadow-xl">
+                        <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                        Watch on Facebook
+                      </a>
+                    </div>
+                  );
+                })
+              ) : (
+                <div class="overflow-hidden rounded-xl bg-slate-100 aspect-video relative group border border-slate-200 flex items-center justify-center">
+                  <img src={post.video_thumbnail || '/image (3).png'} alt="Video Thumbnail" class="absolute inset-0 w-full h-full object-cover opacity-80" />
+                  <a href={permalink} target="_blank" rel="noopener noreferrer" class="relative z-10 flex items-center gap-2 bg-black/60 hover:bg-black/80 text-white px-5 py-3 rounded-full font-semibold transition-colors backdrop-blur-sm shadow-xl">
+                    <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                    Watch on Facebook
+                  </a>
                 </div>
-              ))}
+              )}
             </div>
           </div>
         )}

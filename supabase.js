@@ -230,6 +230,27 @@ async function upsertPostToSupabase(posts) {
                     }
                 }
             }
+            
+            // Auto-heal missing IDs: If the scraper failed to extract a permalink this run
+            // but the post already exists in the DB (by temporary_id), we MUST inherit the 
+            // existing row's true `id` and `permalink` so the upsert updates it instead of violating constraints.
+            if (!post.facebook_post_id && post.temporary_id) {
+                const { data: existing } = await supabase
+                    .from("posts")
+                    .select("id, facebook_post_id, permalink")
+                    .eq("temporary_id", post.temporary_id)
+                    .maybeSingle();
+                
+                if (existing) {
+                    post.id = existing.id;
+                    if (existing.permalink && !post.permalink) {
+                        post.permalink = existing.permalink;
+                    }
+                    if (existing.facebook_post_id && !post.facebook_post_id) {
+                        post.facebook_post_id = existing.facebook_post_id;
+                    }
+                }
+            }
         }
 
         const cleanPosts = postsArray.map(post => ({

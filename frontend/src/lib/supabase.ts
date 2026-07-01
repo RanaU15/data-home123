@@ -60,6 +60,18 @@ export function parseImages(imagesData: any, screenshot?: string): string[] {
   return screenshot ? [screenshot] : [];
 }
 
+export function parseVideoUrls(videoData: any): string[] {
+  if (!videoData) return [];
+  try {
+    if (Array.isArray(videoData)) return videoData;
+    if (typeof videoData === 'string') {
+      const parsed = JSON.parse(videoData);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  return [];
+}
+
 export function formatDate(dateStr?: string): string {
   if (!dateStr) return 'Unknown date';
   try {
