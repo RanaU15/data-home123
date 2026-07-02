@@ -247,7 +247,16 @@ async function initBrowser(isRestart = false) {
     }
 
     const isCI = process.env.CI === 'true';
-    browser = await chromium.launch({ headless: isCI ? true : false });
+    browser = await chromium.launch({
+        headless: isCI ? true : false,
+        args: isCI ? [
+            '--no-sandbox',
+            '--disable-setuid-sandbox', 
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlDetection',
+            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        ] : []
+    });
     
     if (fs.existsSync(SESSION_FILE)) {
         context = await browser.newContext({ storageState: SESSION_FILE });
@@ -283,9 +292,26 @@ async function verifySession() {
 async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingFacebookPostIds, existingTemporaryIds, allPostsData) {
     console.log(`\nGroup ${groupIndex}/${totalGroups}`);
 
-    await targetPage.goto(group.url, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await targetPage.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-    await targetPage.waitForTimeout(5000);
+    await targetPage.goto(group.url, { waitUntil: "networkidle", timeout: 60000 });
+    
+    // Debug logging
+    const currentUrl = targetPage.url();
+    const pageTitle = await targetPage.title();
+    console.log(`[DEBUG] Page URL after load: ${currentUrl}`);
+    console.log(`[DEBUG] Page Title: ${pageTitle}`);
+
+    try {
+        await targetPage.waitForSelector('div[role="feed"]', { timeout: 30000 });
+    } catch (e) {
+        console.log(`[DEBUG] div[role="feed"] not found. Attempting alternative selectors...`);
+        try {
+            await targetPage.waitForSelector('[data-pagelet="GroupFeed"]', { timeout: 10000 });
+        } catch (e2) {
+            console.log(`[DEBUG] Alternative selectors failed.`);
+        }
+    }
+    
+    await targetPage.waitForTimeout(3000 + Math.random() * 2000); // Human-like delay
 
     let oldPostCount = 0;
     let duplicateCount = 0;
@@ -303,8 +329,26 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
     while (!stopGroup && scrollCount < MAX_SCROLL_COUNT && !isShuttingDown) {
         if (targetPage.isClosed()) break;
 
-        const feedUnits = targetPage.locator('div[role="feed"] > div');
-        const count = await feedUnits.count().catch(() => 0);
+        let feedUnits = targetPage.locator('div[role="feed"] > div');
+        let count = await feedUnits.count().catch(() => 0);
+
+        if (count === 0) {
+            console.log(`[DEBUG] Feed count is 0 with primary selector. Trying alternatives...`);
+            feedUnits = targetPage.locator('[data-pagelet="GroupFeed"] > div > div');
+            count = await feedUnits.count().catch(() => 0);
+            
+            if (count === 0) {
+                feedUnits = targetPage.locator('div[data-testid="Keycommand_wrapper"]');
+                count = await feedUnits.count().catch(() => 0);
+            }
+        }
+        
+        console.log(`[DEBUG] Feed items count: ${count}`);
+        
+        if (count === 0) {
+            console.log(`[DEBUG] Capturing screenshot of empty feed...`);
+            await targetPage.screenshot({ path: `debug_empty_feed_${groupId}_${Date.now()}.png` }).catch(() => {});
+        }
 
         // Better virtual scrolling detection: if feed shrinks or DOM rebuilds, reset processedIndex safely
         if (count < totalFeedItems) {
