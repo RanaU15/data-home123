@@ -1266,121 +1266,178 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
 // Main Scrape Cycle Function
 async function runScrapeCycle() {
-    if (isScraping) {
-        console.log("Previous scrape still running. Skipping scheduled cycle.");
-        return;
-    }
-
-    if (isShuttingDown) return;
-
-    isScraping = true;
-    const startTime = Date.now();
-    const startIso = new Date(startTime).toISOString();
-    console.log("\nCycle started");
-
-    updateHealthStatus({ running: true, last_run: startIso });
-    globalAllPostsData = [];
-
     try {
-        if (!browser || !browser.isConnected() || !page || page.isClosed()) {
-            await initBrowser();
-        }
+        // [DEBUG LOG ADDED]: Trace execution start
+        console.log("=== runScrapeCycle started ===");
 
-        const isSessionValid = await verifySession();
-        if (!isSessionValid) {
-            isScraping = false;
+        if (isScraping) {
+            // [DEBUG LOG ADDED]: Log early exit condition
+            console.log("Returning because alreadyRunning (isScraping) flag is true.");
             return;
         }
 
-        for (let g = 0; g < GROUPS.length; g++) {
-            if (isShuttingDown) break;
-            const group = GROUPS[g];
+        if (isShuttingDown) {
+            // [DEBUG LOG ADDED]: Log early exit condition
+            console.log("Returning because isShuttingDown flag is true.");
+            return;
+        }
 
-            const matchGroup = group.url.match(/groups\/([^\/]+)/);
-            const groupId = matchGroup ? matchGroup[1] : "";
-            const { existingFacebookPostIds, existingTemporaryIds } = await getExistingPermalinksForGroup(group.url, group.name, groupId);
+        isScraping = true;
+        const startTime = Date.now();
+        const startIso = new Date(startTime).toISOString();
+        console.log("\nCycle started");
 
-            // Browser recovery: Retry each group up to 3 times
-            for (let attempt = 1; attempt <= 3; attempt++) {
-                if (isShuttingDown) break;
-                try {
-                    await scrapeGroup(group, g + 1, GROUPS.length, page, existingFacebookPostIds, existingTemporaryIds, globalAllPostsData);
-                    updateHealthStatus({ groups_processed: healthStatus.groups_processed + 1 });
+        updateHealthStatus({ running: true, last_run: startIso });
+        globalAllPostsData = [];
+
+        try {
+            // [DEBUG LOG ADDED]: Log before checking/launching browser
+            console.log("Checking browser state...");
+            if (!browser || !browser.isConnected() || !page || page.isClosed()) {
+                // [DEBUG LOG ADDED]: Log browser launch attempt
+                console.log("Launching browser...");
+                await initBrowser();
+                // [DEBUG LOG ADDED]: Log successful browser launch
+                console.log("Browser launched.");
+            } else {
+                // [DEBUG LOG ADDED]: Log if browser is already running
+                console.log("Browser already running.");
+            }
+
+            // [DEBUG LOG ADDED]: Log before verifying session
+            console.log("Loading Facebook session...");
+            const isSessionValid = await verifySession();
+            // [DEBUG LOG ADDED]: Log after session check
+            console.log("Session verified.");
+
+            if (!isSessionValid) {
+                // [DEBUG LOG ADDED]: Log early exit condition for invalid session
+                console.log("Returning because session is invalid.");
+                isScraping = false;
+                return;
+            }
+
+            // [DEBUG LOG ADDED]: Log before scanning groups
+            console.log(`Loading groups... Found ${GROUPS.length} groups.`);
+            for (let g = 0; g < GROUPS.length; g++) {
+                if (isShuttingDown) {
+                    // [DEBUG LOG ADDED]: Log loop break
+                    console.log("Breaking group loop because isShuttingDown flag is true.");
                     break;
-                } catch (err) {
-                    if (attempt < 3 && !isShuttingDown) {
-                        await new Promise(resolve => setTimeout(resolve, 5000));
-                        if (!browser || !browser.isConnected() || !page || page.isClosed()) {
-                            await initBrowser(true);
+                }
+                const group = GROUPS[g];
+
+                // [DEBUG LOG ADDED]: Log before processing individual group
+                console.log(`Processing group ${g + 1}/${GROUPS.length}: ${group.name}`);
+                const matchGroup = group.url.match(/groups\/([^\/]+)/);
+                const groupId = matchGroup ? matchGroup[1] : "";
+                const { existingFacebookPostIds, existingTemporaryIds } = await getExistingPermalinksForGroup(group.url, group.name, groupId);
+
+                // Browser recovery: Retry each group up to 3 times
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    if (isShuttingDown) {
+                        // [DEBUG LOG ADDED]: Log attempt loop break
+                        console.log("Breaking attempt loop because isShuttingDown flag is true.");
+                        break;
+                    }
+                    try {
+                        await scrapeGroup(group, g + 1, GROUPS.length, page, existingFacebookPostIds, existingTemporaryIds, globalAllPostsData);
+                        updateHealthStatus({ groups_processed: healthStatus.groups_processed + 1 });
+                        // [DEBUG LOG ADDED]: Log successful group scrape
+                        console.log(`Successfully processed group: ${group.name}`);
+                        break;
+                    } catch (err) {
+                        // [DEBUG LOG ADDED]: Log the exact error caught during group scrape
+                        console.error(`Error processing group (attempt ${attempt}):`, err);
+                        if (attempt < 3 && !isShuttingDown) {
+                            await new Promise(resolve => setTimeout(resolve, 5000));
+                            if (!browser || !browser.isConnected() || !page || page.isClosed()) {
+                                // [DEBUG LOG ADDED]: Log browser recovery
+                                console.log("Reinitializing browser for recovery...");
+                                await initBrowser(true);
+                            }
+                        } else {
+                            updateHealthStatus({ last_error: err.message });
                         }
-                    } else {
-                        updateHealthStatus({ last_error: err.message });
                     }
                 }
             }
-        }
 
-        // Execute Phase 2 (Video Extraction) for all queued posts (REMOVED)
-
-        // Save to JSON
-        if (globalAllPostsData.length > 0) {
-            let existingJson = [];
-            if (fs.existsSync(JSON_FILE)) {
-                try { existingJson = JSON.parse(fs.readFileSync(JSON_FILE, "utf8")); } catch (e) { }
-            }
-            const existingIds = new Set(existingJson.map(p => p.id));
-            const newUniquePosts = globalAllPostsData.filter(p => !existingIds.has(p.id));
-            const updatedJson = [...existingJson, ...newUniquePosts];
-            fs.writeFileSync(JSON_FILE, JSON.stringify(updatedJson, null, 2));
-        }
-
-        // Save to CSV
-        if (globalAllPostsData.length > 0) {
-            const hasCsv = fs.existsSync(CSV_FILE);
-            let existingCsvIds = new Set();
-            if (hasCsv) {
-                try {
-                    const lines = fs.readFileSync(CSV_FILE, "utf8").split("\n");
-                    lines.slice(1).forEach(line => {
-                        const match = line.match(/^"([^"]+)"/);
-                        if (match && match[1]) existingCsvIds.add(match[1]);
-                    });
-                } catch (e) { }
-            }
-            let csvContent = hasCsv ? "" : "ID,Group Name,Group URL,Author,Post Date,Permalink,Likes,Comments,Shares,Screenshot,Images,Body\n";
-            globalAllPostsData.forEach(post => {
-                if (!existingCsvIds.has(post.id)) {
-                    const cleanAuthor = post.author.replace(/"/g, '""');
-                    const cleanBody = post.body.replace(/"/g, '""');
-                    const imagesJson = JSON.stringify(post.images).replace(/"/g, '""');
-                    csvContent += `"${post.id}","${post.group_name}","${post.group_url}","${cleanAuthor}","${post.post_date}","${post.permalink || ''}","${post.likes}","${post.comments}","${post.shares}","${post.screenshot}","${imagesJson}","${cleanBody}"\n`;
+            // [DEBUG LOG ADDED]: Log before saving data
+            console.log("Saving to JSON/CSV...");
+            // Save to JSON
+            if (globalAllPostsData.length > 0) {
+                let existingJson = [];
+                if (fs.existsSync(JSON_FILE)) {
+                    try { existingJson = JSON.parse(fs.readFileSync(JSON_FILE, "utf8")); } catch (e) { }
                 }
-            });
-            if (hasCsv && csvContent.length > 0) {
-                fs.appendFileSync(CSV_FILE, csvContent);
-            } else if (!hasCsv) {
-                fs.writeFileSync(CSV_FILE, csvContent);
+                const existingIds = new Set(existingJson.map(p => p.id));
+                const newUniquePosts = globalAllPostsData.filter(p => !existingIds.has(p.id));
+                const updatedJson = [...existingJson, ...newUniquePosts];
+                fs.writeFileSync(JSON_FILE, JSON.stringify(updatedJson, null, 2));
             }
+
+            // Save to CSV
+            if (globalAllPostsData.length > 0) {
+                const hasCsv = fs.existsSync(CSV_FILE);
+                let existingCsvIds = new Set();
+                if (hasCsv) {
+                    try {
+                        const lines = fs.readFileSync(CSV_FILE, "utf8").split("\n");
+                        lines.slice(1).forEach(line => {
+                            const match = line.match(/^"([^"]+)"/);
+                            if (match && match[1]) existingCsvIds.add(match[1]);
+                        });
+                    } catch (e) { }
+                }
+                let csvContent = hasCsv ? "" : "ID,Group Name,Group URL,Author,Post Date,Permalink,Likes,Comments,Shares,Screenshot,Images,Body\n";
+                globalAllPostsData.forEach(post => {
+                    if (!existingCsvIds.has(post.id)) {
+                        const cleanAuthor = post.author.replace(/"/g, '""');
+                        const cleanBody = post.body.replace(/"/g, '""');
+                        const imagesJson = JSON.stringify(post.images).replace(/"/g, '""');
+                        csvContent += `"${post.id}","${post.group_name}","${post.group_url}","${cleanAuthor}","${post.post_date}","${post.permalink || ''}","${post.likes}","${post.comments}","${post.shares}","${post.screenshot}","${imagesJson}","${cleanBody}"\n`;
+                    }
+                });
+                if (hasCsv && csvContent.length > 0) {
+                    fs.appendFileSync(CSV_FILE, csvContent);
+                } else if (!hasCsv) {
+                    fs.writeFileSync(CSV_FILE, csvContent);
+                }
+            }
+            // [DEBUG LOG ADDED]: Log successful save
+            console.log("Data saved successfully.");
+
+        } catch (err) {
+            // [DEBUG LOG ADDED]: Log the inner try/catch error without swallowing, so the top level block catches it
+            console.error("Inner try/catch encountered an error:", err);
+            updateHealthStatus({ last_error: err.message });
+            throw err;
         }
 
-    } catch (err) {
-        updateHealthStatus({ last_error: err.message });
+        const runtimeSec = Number(((Date.now() - startTime) / 1000).toFixed(0));
+        const nextRunTime = new Date(startTime + 30 * 60 * 1000);
+
+        console.log("\nCycle finished");
+        console.log(`Runtime: ${runtimeSec} seconds`);
+        console.log(`Next run: ${nextRunTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+
+        updateHealthStatus({
+            running: false,
+            runtime_seconds: runtimeSec,
+            next_run: nextRunTime.toISOString()
+        });
+
+        isScraping = false;
+        // [DEBUG LOG ADDED]: Log cycle complete
+        console.log("=== Cycle complete ===");
+    } catch (topLevelError) {
+        // [DEBUG LOG ADDED]: Explicit top-level catch to guarantee no error is swallowed
+        console.error("SCRAPER ERROR:");
+        console.error(topLevelError.stack || topLevelError);
+        isScraping = false;
+        process.exit(1);
     }
-
-    const runtimeSec = Number(((Date.now() - startTime) / 1000).toFixed(0));
-    const nextRunTime = new Date(startTime + 30 * 60 * 1000);
-
-    console.log("\nCycle finished");
-    console.log(`Runtime: ${runtimeSec} seconds`);
-    console.log(`Next run: ${nextRunTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
-
-    updateHealthStatus({
-        running: false,
-        runtime_seconds: runtimeSec,
-        next_run: nextRunTime.toISOString()
-    });
-
-    isScraping = false;
 }
 
 // Graceful shutdown on SIGINT or SIGTERM
