@@ -28,12 +28,13 @@ jobs:
     - name: Restore Facebook Session
       env:
         SESSION_DATA: ${{ secrets.FACEBOOK_SESSION }}
-      run: echo "$SESSION_DATA" > facebook-session.json
+      run: node -e "require('fs').writeFileSync('facebook-session.json', process.env.SESSION_DATA)"
 
     - name: Verify Session File
       run: |
         echo "Size: $(wc -c < facebook-session.json) bytes"
-        echo "Preview: $(head -c 30 facebook-session.json)"
+        echo "Preview: $(head -c 80 facebook-session.json)"
+        echo "Valid JSON: $(node -e 'JSON.parse(require("fs").readFileSync("facebook-session.json","utf8")); console.log("YES")' 2>&1)"
 
     - name: Run Facebook Scraper
       env:
