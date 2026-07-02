@@ -6,8 +6,10 @@
   "scripts": {
     "login": "node login.js",
     "scrape": "node scraper.js",
+    "start": "node scraper.js",
     "view-db": "node view_db.js",
-    "dashboard": "node dashboard/server.js"
+    "dashboard": "node dashboard/server.js",
+    "postinstall": "playwright install chromium --with-deps"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.43.0",
