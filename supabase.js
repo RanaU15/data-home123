@@ -225,39 +225,50 @@ async function upsertPostToSupabase(posts) {
 
                 if (tempRecords && tempRecords.length > 0) {
                     for (const temp of tempRecords) {
-                        await supabase
+                        const updatePayload = {
+                            id: post.permalink,
+                            permalink: post.permalink,
+                            facebook_post_id: post.facebook_post_id,
+                            temporary_id: null,
+                            needs_permalink: false,
+                            body: post.body,
+                            likes: post.likes,
+                            comments: post.comments,
+                            shares: post.shares,
+                            reaction_count: post.reaction_count,
+                            comment_count: post.comment_count,
+                            share_count: post.share_count,
+                            reaction_breakdown: post.reaction_breakdown,
+                            comments_disabled: post.comments_disabled,
+                            images: post.images,
+                            image_count: post.image_count,
+                            video_urls: post.video_urls,
+                            video_thumbnail: post.video_thumbnail,
+                            video_duration: post.video_duration,
+                            video_count: post.video_count,
+                            has_video: post.has_video,
+                            post_type: post.post_type,
+                            author_avatar: post.author_avatar,
+                            author_profile_url: post.author_profile_url,
+                            post_url: post.post_url,
+                            post_created_at: post.post_created_at,
+                            post_time_text: post.post_time_text,
+                            scraped_at: post.scraped_at,
+                            facebook_video_url: post.facebook_video_url
+                        };
+                        
+                        let updateRes = await supabase
                             .from("posts")
-                            .update({
-                                id: post.permalink,
-                                permalink: post.permalink,
-                                facebook_post_id: post.facebook_post_id,
-                                temporary_id: null,
-                                needs_permalink: false,
-                                body: post.body,
-                                likes: post.likes,
-                                comments: post.comments,
-                                shares: post.shares,
-                                reaction_count: post.reaction_count,
-                                comment_count: post.comment_count,
-                                share_count: post.share_count,
-                                reaction_breakdown: post.reaction_breakdown,
-                                comments_disabled: post.comments_disabled,
-                                images: post.images,
-                                image_count: post.image_count,
-                                video_urls: post.video_urls,
-                                video_thumbnail: post.video_thumbnail,
-                                video_duration: post.video_duration,
-                                video_count: post.video_count,
-                                has_video: post.has_video,
-                                post_type: post.post_type,
-                                author_avatar: post.author_avatar,
-                                author_profile_url: post.author_profile_url,
-                                post_url: post.post_url,
-                                post_created_at: post.post_created_at,
-                                post_time_text: post.post_time_text,
-                                scraped_at: post.scraped_at
-                            })
+                            .update(updatePayload)
                             .eq("id", temp.id);
+                            
+                        if (updateRes.error && updateRes.error.message.includes("facebook_video_url") && updateRes.error.message.includes("schema cache")) {
+                            delete updatePayload.facebook_video_url;
+                            updateRes = await supabase
+                                .from("posts")
+                                .update(updatePayload)
+                                .eq("id", temp.id);
+                        }
                     }
                 }
             }
@@ -317,15 +328,38 @@ async function upsertPostToSupabase(posts) {
             scraped_at: post.scraped_at,
             temporary_id: post.temporary_id,
             needs_permalink: post.needs_permalink,
-            facebook_post_id: post.facebook_post_id
+            facebook_post_id: post.facebook_post_id,
+            facebook_video_url: post.facebook_video_url
         }));
 
-        const { data, error } = await supabase
+        let { data, error } = await supabase
             .from("posts")
             .upsert(cleanPosts, {
                 onConflict: "id",
-                ignoreDuplicates: false // Changed to false to allow updating existing records
+                ignoreDuplicates: false
             });
+
+        if (error && error.message.includes("facebook_video_url") && error.message.includes("schema cache")) {
+            console.warn(`\n⚠️  WARNING: The 'facebook_video_url' column is missing in your Supabase database!`);
+            console.warn(`⚠️  Please go to your Supabase Dashboard -> SQL Editor and run:`);
+            console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_video_url TEXT;`);
+            console.warn(`⚠️  Retrying upload without the video URL to prevent crashing...\n`);
+            
+            const fallbackPosts = cleanPosts.map(p => {
+                const { facebook_video_url, ...rest } = p;
+                return rest;
+            });
+            
+            const fallbackRes = await supabase
+                .from("posts")
+                .upsert(fallbackPosts, {
+                    onConflict: "id",
+                    ignoreDuplicates: false
+                });
+                
+            data = fallbackRes.data;
+            error = fallbackRes.error;
+        }
 
         if (error) {
             console.error(`❌ Supabase Upsert Error:`, error.message);
@@ -351,7 +385,7 @@ async function deletePostFromSupabase(postId) {
     }
 }
 
-async function checkDuplicateInSupabase(groupId, facebookPostId, temporaryId) {
+async function checkDuplicateInSupabase(groupId, facebookPostId, postUrl, temporaryId) {
     if (!supabase) return false;
     try {
         if (facebookPostId) {
@@ -361,19 +395,36 @@ async function checkDuplicateInSupabase(groupId, facebookPostId, temporaryId) {
                 .eq("group_id", groupId)
                 .eq("facebook_post_id", facebookPostId)
                 .limit(1);
-            if (!error && data && data.length > 0) {
-                return true;
-            }
-        } else if (temporaryId) {
+            if (!error && data && data.length > 0) return true;
+        }
+        
+        if (postUrl) {
+            const { data, error } = await supabase
+                .from("posts")
+                .select("post_url")
+                .eq("group_id", groupId)
+                .eq("post_url", postUrl)
+                .limit(1);
+            if (!error && data && data.length > 0) return true;
+            
+            // Also check 'permalink' column just in case since they both represent the URL
+            const { data: permData, error: permError } = await supabase
+                .from("posts")
+                .select("permalink")
+                .eq("group_id", groupId)
+                .eq("permalink", postUrl)
+                .limit(1);
+            if (!permError && permData && permData.length > 0) return true;
+        }
+        
+        if (temporaryId) {
             const { data, error } = await supabase
                 .from("posts")
                 .select("temporary_id")
                 .eq("group_id", groupId)
                 .eq("temporary_id", temporaryId)
                 .limit(1);
-            if (!error && data && data.length > 0) {
-                return true;
-            }
+            if (!error && data && data.length > 0) return true;
         }
         return false;
     } catch (err) {

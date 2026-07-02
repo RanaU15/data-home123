@@ -33,6 +33,7 @@ export interface Post {
   temporary_id?: string;
   needs_permalink?: boolean;
   facebook_post_id?: string;
+  facebook_video_url?: string;
 }
 
 const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL || 'https://gimjsxpwteluwiopcrqq.supabase.co';

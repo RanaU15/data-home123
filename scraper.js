@@ -57,15 +57,17 @@ function getVideoSignature(urlStr) {
         const urlObj = new URL(urlStr);
         const parts = urlObj.pathname.split('/').pop().split('_');
         if (parts.length >= 3 && parts[1].length > 8 && !isNaN(parts[1])) {
-            return parts[1]; // The asset ID
+            return parts[1];
         }
-        return urlObj.pathname; // Fallback to full path if pattern doesn't match
+        return urlObj.pathname;
     } catch (e) {
         return urlStr.split('?')[0];
     }
 }
 
 let globalAllPostsData = [];
+let globalVideoQueue = [];
+
 
 // Global Health Monitoring Stats
 let healthStatus = {
@@ -143,7 +145,14 @@ function cleanPermalink(url) {
         if (parsed.pathname.includes("/posts/") || parsed.pathname.includes("/permalink/")) {
             parsed.search = ""; // Strip search entirely for standard post permalinks
         }
-        return parsed.toString();
+        
+        const finalUrl = parsed.toString();
+        // Reject group homepages
+        if (finalUrl.match(/^https?:\/\/(www\.)?facebook\.com\/groups\/[^\/]+\/?$/) || finalUrl.match(/^https?:\/\/(www\.)?facebook\.com\/groups\/?$/)) {
+            return null;
+        }
+        
+        return finalUrl;
     } catch (e) {
         return url;
     }
@@ -433,47 +442,11 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 try {
                     const url = res.url();
                     const resourceType = res.request().resourceType();
-                    
-                    const isMp4ByUrl = url.includes('.mp4') && url.includes('video') && url.includes('fbcdn.net');
-                    let isMp4ByHeader = false;
-                    let cType = null;
-                    
-                    if (!isMp4ByUrl && (resourceType === 'media' || resourceType === 'fetch' || resourceType === 'xhr')) {
-                        cType = await res.headerValue('content-type').catch(() => null);
-                        if (cType && (cType.includes('video/mp4') || cType.includes('video/'))) {
-                            if (url.includes('fbcdn.net') && !url.includes('spacer')) {
-                                isMp4ByHeader = true;
-                            }
-                        }
-                    }
-
-                    if (isMp4ByUrl || isMp4ByHeader) {
-                        if (!diagnosticLogs.firstMp4Intercepted) diagnosticLogs.firstMp4Intercepted = Date.now();
-                        diagnosticLogs.mp4Intercepted = true;
-                        postNetworkState.totalVideoRequests++;
-                        
-                        const headers = res.headers();
-                        const status = res.status();
-                        const contentLength = parseInt(headers['content-length'] || '0', 10);
-                        const contentRange = headers['content-range'] || null;
-                        const acceptRanges = headers['accept-ranges'] || null;
-
-                        postNetworkState.capturedVideoCandidates.push({
-                            url,
-                            contentLength,
-                            contentRange,
-                            acceptRanges,
-                            status,
-                            headers
-                        });
-                    }
-                    
                     if (resourceType === 'image' || resourceType === 'fetch' || resourceType === 'xhr') {
                         if (url.includes('fbcdn.net') || url.includes('scontent.xx.fbcdn.net') || url.match(/scontent\.fraj.*\.fbcdn\.net/)) {
                             if (url.includes('t15.') || url.includes('video_preview') || url.includes('video') || url.includes('poster')) {
                                 if (url.includes('.jpg') || url.includes('.jpeg') || url.includes('.webp') || url.includes('.png')) {
                                     postNetworkState.capturedVideoThumbnails.add(url);
-                                    console.log(`Video thumbnail intercepted`);
                                 }
                             }
                         }
@@ -570,7 +543,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     let bestUrl = null;
                     let bestTimestamp = "Today";
 
-                    const links = [...el.querySelectorAll('a[href*="/posts/"], a[href*="/permalink/"], a[href*="/photo.php"], a[href*="/story.php"], a[href*="multi_permalinks="], a[href*="story_fbid="], a[href*="fbid="]')];
+                    const links = [...el.querySelectorAll('a[href*="/posts/"], a[href*="/permalink/"], a[href*="/photo.php"], a[href*="/story.php"], a[href*="multi_permalinks="], a[href*="story_fbid="], a[href*="fbid="], a[href*="/watch/"], a[href*="/reel/"]')];
 
                     for (const a of links) {
                         const href = a.getAttribute("href") || "";
@@ -822,16 +795,15 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 .replace(/\s+/g, ' ')
                 .trim();
 
-            let stableImgInitial = (data.images || []).map(imgUrl => {
+            let stableImgInitial = "";
+            if (data.images && data.images.length > 0) {
                 try {
-                    const parsed = new URL(imgUrl);
-                    return path.basename(parsed.pathname);
-                } catch(e) {
-                    return "";
-                }
-            }).filter(Boolean).sort().join("|");
+                    const parsed = new URL(data.images[0]);
+                    stableImgInitial = path.basename(parsed.pathname);
+                } catch(e) {}
+            }
 
-            let tempTemporaryId = crypto.createHash('sha256').update(groupId + normAuthorInitial + "today" + normBodyInitial + stableImgInitial).digest('hex');
+            let tempTemporaryId = crypto.createHash('sha256').update(groupId + normAuthorInitial + normBodyInitial + stableImgInitial).digest('hex');
 
             if ((tempFacebookPostId && scrapedThisRun.has(tempFacebookPostId)) || scrapedThisRun.has(tempTemporaryId)) {
                 processedIndex = i + 1;
@@ -963,16 +935,15 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 .replace(/\s+/g, ' ')
                 .trim();
 
-            const stableImages = (data.images || []).map(imgUrl => {
+            let stableFinalImg = "";
+            if (data.images && data.images.length > 0) {
                 try {
-                    const parsed = new URL(imgUrl);
-                    return path.basename(parsed.pathname);
-                } catch(e) {
-                    return "";
-                }
-            }).filter(Boolean).sort().join("|");
+                    const parsed = new URL(data.images[0]);
+                    stableFinalImg = path.basename(parsed.pathname);
+                } catch(e) {}
+            }
 
-            temporaryId = crypto.createHash('sha256').update(groupId + normalizedAuthor + "today" + normalizedBodyText + stableImages).digest('hex');
+            temporaryId = crypto.createHash('sha256').update(groupId + normalizedAuthor + normalizedBodyText + stableFinalImg).digest('hex');
 
             if (!permalink) {
                 permalink = temporaryId;
@@ -986,37 +957,45 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
             let hasPerm = facebookPostId ? existingFacebookPostIds.has(facebookPostId) : false;
             let hasTemp = !facebookPostId ? existingTemporaryIds.has(temporaryId) : false;
+            
+            let duplicateReason = "";
 
             // Perform definitive Supabase duplicate check as single source of truth if not in memory set
             if (facebookPostId && !hasPerm) {
-                hasPerm = await checkDuplicateInSupabase(groupId, facebookPostId, null);
+                hasPerm = await checkDuplicateInSupabase(groupId, facebookPostId, null, null);
                 if (hasPerm) existingFacebookPostIds.add(facebookPostId);
-            } else if (!facebookPostId && !hasTemp) {
-                hasTemp = await checkDuplicateInSupabase(groupId, null, temporaryId);
+            } 
+            
+            let hasUrlDup = false;
+            if (!hasPerm && permalink && permalink.startsWith("http")) {
+                hasUrlDup = await checkDuplicateInSupabase(groupId, null, permalink, null);
+            }
+            
+            if (!facebookPostId && !hasUrlDup && !hasTemp) {
+                hasTemp = await checkDuplicateInSupabase(groupId, null, null, temporaryId);
                 if (hasTemp) existingTemporaryIds.add(temporaryId);
             }
 
-            const isDuplicate = hasPerm || hasTemp;
-            const decision = isDuplicate ? "UPDATE_EXISTING" : "PROCESS_NEW_POST";
-
-            console.log("--------------------------------\n");
-            console.log(`Facebook Post ID:\n${facebookPostId || "N/A"}\n`);
-            console.log(`Temporary ID:\n${temporaryId}\n`);
-            console.log(`existingPostIds.has(...)\n${hasPerm}\n`);
-            console.log(`existingTemporaryIds.has(...)\n${hasTemp}\n`);
-            console.log(`Decision:\n${decision}\n`);
-            console.log("--------------------------------");
-
+            const isDuplicate = hasPerm || hasUrlDup || hasTemp;
+            
+            if (hasPerm) duplicateReason = "facebook_post_id";
+            else if (hasUrlDup) duplicateReason = "original_post_url";
+            else if (hasTemp) duplicateReason = "temporary_id";
+            
             const isUpdateCase = facebookPostId && !existingFacebookPostIds.has(facebookPostId) && existingTemporaryIds.has(temporaryId);
+            
+            const decision = isUpdateCase ? "UPDATE" : (isDuplicate ? "SKIP" : "INSERT");
+
+            console.log("\n========== POST VALIDATION ==========");
+            console.log(`Facebook Post ID:\n${facebookPostId || "N/A"}\n`);
+            console.log(`Original Post URL:\n${permalink && permalink.startsWith("http") ? permalink : "N/A"}\n`);
+            console.log(`Duplicate Found:\n${isDuplicate ? "YES" : "NO"}\n`);
+            console.log(`Action:\n${decision}\n`);
+            if (isDuplicate || isUpdateCase) console.log(`Reason:\n${duplicateReason || "temporary_id"}\n`);
+            console.log("====================================\n");
 
             // Duplicate detection BEFORE downloading images or saving anything.
-            if (isDuplicate) {
-                if (hasPerm) {
-                    console.log("Duplicate by Facebook ID");
-                } else {
-                    console.log("Duplicate by temporary_id");
-                }
-
+            if (isDuplicate && !isUpdateCase) {
                 updateHealthStatus({ duplicates_skipped: healthStatus.duplicates_skipped + 1 });
                 scrapedThisRun.add(facebookPostId || temporaryId);
                 scrapedThisRun.add(temporaryId);
@@ -1029,12 +1008,15 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     cleanupNetworkListener();
                     break;
                 }
-                // Do NOT continue. We want to update it.
+                
+                // CRITICAL FIX: Actually skip the rest of the loop for duplicates!
+                cleanupNetworkListener();
+                continue;
             } else {
                 duplicateCount = 0;
             }
 
-            if (isUpdateCase && !isDuplicate) {
+            if (isUpdateCase) {
                 // When a real facebook_post_id is discovered for a previously saved temporary_id, perform an UPDATE in Supabase.
                 try {
                     const updateRes = await updatePostPermalinkInSupabase(temporaryId, permalink, facebookPostId);
@@ -1085,171 +1067,24 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 }
             }
 
-            const uploadedVideoUrls = [];
-            const uploadedVideoPaths = [];
-
-            if (data.has_video && postNetworkState.capturedVideoCandidates.length > 0) {
-                console.log(`\n--- VIDEO CANDIDATES ---`);
-                
-                let validCandidates = [];
-                for (const candidate of postNetworkState.capturedVideoCandidates) {
-                    let selected = "NO";
-                    let reason = "";
-                    
-                    if (candidate.url.includes('init.mp4') || candidate.url.includes('dash')) {
-                        reason = "Ignored: initialization segment";
-                    } else if (candidate.contentLength < 500000) {
-                        reason = `Ignored: Size < 500KB (${candidate.contentLength} bytes)`;
-                    } else if (candidate.status === 206) {
-                        if (candidate.contentRange && candidate.contentRange.startsWith('bytes 0-')) {
-                            const match = candidate.contentRange.match(/bytes 0-(\d+)\/(\d+)/);
-                            if (match && match[1] === (parseInt(match[2]) - 1).toString()) {
-                                selected = "YES";
-                                reason = "Valid complete 206 response";
-                                validCandidates.push(candidate);
-                            } else {
-                                reason = `Ignored: Partial 206 response (${candidate.contentRange})`;
-                            }
-                        } else {
-                            reason = `Ignored: Partial 206 response (No/Invalid Content-Range)`;
-                        }
-                    } else if (candidate.status === 200) {
-                        selected = "YES";
-                        reason = "Valid 200 complete response";
-                        validCandidates.push(candidate);
-                    } else {
-                        reason = `Ignored: Status ${candidate.status}`;
-                    }
-                    
-                    console.log(`URL: ${candidate.url.substring(0, 70)}...`);
-                    console.log(`Content-Length: ${candidate.contentLength}`);
-                    console.log(`Status: ${candidate.status}`);
-                    console.log(`Selected: ${selected}`);
-                    console.log(`Reason: ${reason}\n`);
-                }
-                
-                let videoUrlArray = [];
-                if (validCandidates.length > 0) {
-                    validCandidates.sort((a, b) => b.contentLength - a.contentLength);
-                    const uniqueSignatures = new Set();
-                    for (const cand of validCandidates) {
-                        const sig = getVideoSignature(cand.url);
-                        if (!uniqueSignatures.has(sig)) {
-                            uniqueSignatures.add(sig);
-                            videoUrlArray.push(cand);
-                            if (videoUrlArray.length >= (data.video_count || 1)) break;
-                        }
-                    }
-                }
-                
-                for (let v = 0; v < videoUrlArray.length; v++) {
-                    const candidate = videoUrlArray[v];
-                    const actualVideoUrl = candidate.url;
-                    const vidFilename = `post_${groupId}_${Date.now()}_${v + 1}.mp4`;
-                    
-                    console.log(`Downloading video...`);
-                    const vidBuffer = await downloadToBuffer(actualVideoUrl);
-                    if (vidBuffer) {
-                        if (vidBuffer.length >= 500000) {
-                            console.log(`Uploading video (Verified Size: ${vidBuffer.length} bytes)...`);
-                            const uploadResult = await uploadVideoToSupabase(vidBuffer, `videos/${vidFilename}`);
-                            if (uploadResult && uploadResult.publicUrl) {
-                                console.log(`Video uploaded\nPublic URL:\n${uploadResult.publicUrl}`);
-                                uploadedVideoUrls.push(uploadResult.publicUrl);
-                                uploadedVideoPaths.push(uploadResult.storagePath);
-                            } else {
-                                console.warn(`Video upload failed`);
-                            }
-                        } else {
-                            console.warn(`Video download failed verification: Size ${vidBuffer.length} bytes < 500KB`);
-                        }
-                    } else {
-                        console.warn(`Video download failed`);
-                    }
-                }
-                console.log(`Videos uploaded: ${uploadedVideoUrls.length}`);
-                console.log(`--- END VIDEO CANDIDATES ---\n`);
-            }
-
-            if (uploadedVideoUrls.length > 0) {
-                console.log(`Final saved videos: ${uploadedVideoUrls.length}`);
-                data.video_urls = uploadedVideoUrls;
-                data.video = uploadedVideoUrls[0]; 
-                data.has_video = true;
-                data.video_count = uploadedVideoUrls.length;
-                if (data.post_type === 'image' && data.images.length > 0) {
-                    data.post_type = 'mixed';
-                } else if (data.post_type === 'text') {
-                    data.post_type = uploadedVideoUrls.length > 1 ? 'multiple_videos' : 'video';
-                }
-            } else if (data.has_video) {
-                data.video_urls = [];
-                data.has_video = false;
-                data.video = "None";
-                if (data.post_type === 'video' || data.post_type === 'multiple_videos' || data.post_type === 'mixed') {
-                    data.post_type = data.images.length > 1 ? 'multiple_images' : (data.images.length === 1 ? 'image' : 'text');
+            if (data.has_video && !isDuplicate && !isUpdateCase) {
+                if (permalink && permalink.startsWith("http")) {
+                    console.log(`Video detected: YES\nFacebook video URL:\n${permalink}`);
+                } else {
+                    console.log(`Video detected: YES, but no valid permalink found.`);
                 }
             }
             
-            // Process Video Thumbnail
-            if (data.has_video || uploadedVideoUrls.length > 0) {
-                let thumbnailSource = "";
-                
-                // If not found in DOM via poster (Priority 1), check network (Priority 2)
-                if (!data.video_thumbnail && postNetworkState.capturedVideoThumbnails.size > 0) {
-                    const thumbArray = Array.from(postNetworkState.capturedVideoThumbnails);
-                    data.video_thumbnail = thumbArray[0];
-                    thumbnailSource = "network";
-                    console.log("Video thumbnail captured from network");
-                } else if (data.video_thumbnail) {
-                    console.log("Video poster found / Video thumbnail extracted from DOM");
-                } else {
-                    console.log("No thumbnail available");
-                }
-                
-                if (data.video_thumbnail && data.video_thumbnail.startsWith('http')) {
-                    const thumbFilename = `thumb_${groupId}_${Date.now()}.jpg`;
-                    const thumbBuffer = await downloadToBuffer(data.video_thumbnail);
-                    if (thumbBuffer) {
-                        const uploadResult = await uploadImageToSupabase(thumbBuffer, `post_images/${thumbFilename}`, 'image/jpeg');
-                        if (uploadResult && uploadResult.publicUrl) {
-                            console.log(`Thumbnail uploaded`);
-                            data.video_thumbnail = uploadResult.publicUrl;
-                        } else {
-                            console.warn("Thumbnail upload failed");
-                        }
-                    } else {
-                        console.warn("Thumbnail upload failed");
-                    }
-                } else {
-                    data.video_thumbnail = null;
-                }
-            }
-
+            // Only image thumbnails are uploaded in Phase 1 now. Video extraction handles thumbnails in Phase 2 if needed.
+            
             cleanupNetworkListener();
             
-            diagnosticLogs.cardProcessingEnd = Date.now();
-            if (data && data.diagnosticInfo) {
-                diagnosticLogs.videoElementsCount = data.diagnosticInfo.videoElementsCount;
-                diagnosticLogs.dataVideoIdCount = data.diagnosticInfo.dataVideoIdCount;
-                diagnosticLogs.dataStoreVideoCount = data.diagnosticInfo.dataStoreVideoCount;
-                diagnosticLogs.posterExists = data.diagnosticInfo.posterExists;
-            }
-
-            console.log("\n=== PIPELINE AUDIT DIAGNOSTICS ===");
-            console.log(`1. Number of <video> elements found: ${diagnosticLogs.videoElementsCount}`);
-            console.log(`2. Number of [data-video-id] elements found: ${diagnosticLogs.dataVideoIdCount}`);
-            console.log(`3. Number of elements with data-store containing "video": ${diagnosticLogs.dataStoreVideoCount}`);
-            console.log(`4. Whether a poster attribute exists: ${diagnosticLogs.posterExists}`);
-            console.log(`5. MP4 requests intercepted during card: ${diagnosticLogs.mp4Intercepted}`);
-            console.log(`6. Timestamps:`);
-            console.log(`   - Card processing start: ${diagnosticLogs.cardProcessingStart}`);
-            console.log(`   - First MP4 intercepted: ${diagnosticLogs.firstMp4Intercepted || 'None'}`);
-            console.log(`   - Metadata extraction: ${diagnosticLogs.metadataExtractionStart || 'None'}`);
-            console.log(`   - Card processing end: ${diagnosticLogs.cardProcessingEnd}`);
-            console.log(`7. Network listener still attached: ${diagnosticLogs.listenerAttached}`);
-            console.log(`8. Cleared arrays status: ${diagnosticLogs.clearedStatus}`);
-            console.log("==================================\n");
+            console.log("\n=== PHASE 1 (FEED SCAN) COMPLETE ===");
+            console.log(`Timestamps:`);
+            console.log(`- Card processing start: ${diagnosticLogs.cardProcessingStart}`);
+            console.log(`- Metadata extraction: ${diagnosticLogs.metadataExtractionStart || 'None'}`);
+            console.log(`- Card processing end: ${Date.now()}`);
+            console.log("====================================\n");
 
             if (uploadedCount > 0) {
                 console.log(`Uploaded ${uploadedCount} images from memory`);
@@ -1354,7 +1189,8 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 scraped_at: new Date().toISOString(),
                 temporary_id: temporaryId,
                 needs_permalink: !data.permalinkObj,
-                facebook_post_id: facebookPostId
+                facebook_post_id: facebookPostId,
+                facebook_video_url: (data.has_video && permalink && permalink.startsWith("http")) ? permalink : null
             };
 
             try {
@@ -1364,7 +1200,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 }
                 console.log("Saved to Supabase");
                 console.log("Saved new post");
-                console.log(`Database updated\nhas_video: ${postObj.has_video}\nvideo_urls: ${JSON.stringify(postObj.video_urls)}\nvideo_thumbnail: ${postObj.video_thumbnail}`);
+                console.log(`Database updated:\nYES\nvideo_urls: ${JSON.stringify(postObj.video_urls)}`);
 
                 // After every successful save, immediately add both facebook_post_id and temporary_id into the in-memory Set so duplicates later in the same cycle are skipped.
                 if (facebookPostId) {
@@ -1483,6 +1319,8 @@ async function runScrapeCycle() {
                 }
             }
         }
+
+        // Execute Phase 2 (Video Extraction) for all queued posts (REMOVED)
 
         // Save to JSON
         if (globalAllPostsData.length > 0) {
