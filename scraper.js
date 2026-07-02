@@ -219,12 +219,18 @@ async function autoLogin() {
     }
 
     console.log("Attempting automatic login...");
-    await page.goto("https://www.facebook.com/login", { waitUntil: "domcontentloaded" });
-    
+    await page.goto("https://www.facebook.com/login", { waitUntil: "networkidle", timeout: 60000 });
+    await page.waitForTimeout(3000);
     // Fill credentials
-    await page.fill('#email', email);
-    await page.fill('#pass', password);
-    await page.click('button[name="login"]');
+    await page.waitForSelector('input[name="email"]', { timeout: 30000 });
+    await page.fill('input[name="email"]', email);
+    await page.waitForTimeout(1000);
+    await page.waitForSelector('input[name="pass"]', { timeout: 30000 });
+    await page.fill('input[name="pass"]', password);
+    await page.waitForTimeout(1000);
+    await page.click('button[name="login"]').catch(() =>
+        page.click('button[type="submit"]')
+    );
 
     console.log("Submitted login credentials, waiting for navigation...");
     try {
