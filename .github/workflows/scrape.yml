@@ -25,10 +25,6 @@ jobs:
     - name: Install Playwright Browsers
       run: npx playwright install chromium --with-deps
 
-    - name: Restore Facebook Session
-      env:
-        SESSION_DATA: ${{ secrets.FACEBOOK_SESSION }}
-      run: node -e "require('fs').writeFileSync('facebook-session.json', process.env.SESSION_DATA)"
 
     - name: Run Facebook Scraper
       env:
