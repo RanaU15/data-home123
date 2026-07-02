@@ -30,12 +30,6 @@ jobs:
         SESSION_DATA: ${{ secrets.FACEBOOK_SESSION }}
       run: node -e "require('fs').writeFileSync('facebook-session.json', process.env.SESSION_DATA)"
 
-    - name: Verify Session File
-      run: |
-        echo "Size: $(wc -c < facebook-session.json) bytes"
-        echo "Preview: $(head -c 80 facebook-session.json)"
-        echo "Valid JSON: $(node -e 'JSON.parse(require("fs").readFileSync("facebook-session.json","utf8")); console.log("YES")' 2>&1)"
-
     - name: Run Facebook Scraper
       env:
         CI: true
@@ -43,4 +37,12 @@ jobs:
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         FB_EMAIL: ${{ secrets.FB_EMAIL }}
         FB_PASSWORD: ${{ secrets.FB_PASSWORD }}
-      run: node scraper.js --single-run
+      run: node scraper.js --single-run 2>&1 | tee output.txt
+
+    - name: Show Debug Info
+      if: always()
+      run: |
+        echo "=== TIMESTAMPS FOUND ==="
+        grep -i "timestamp\|old post\|today\|skipped\|saved\|duplicate\|decision\|Today's post\|Old post" output.txt | head -100
+        echo "=== ALL OUTPUT ==="
+        cat output.txt | head -200
