@@ -2,12 +2,13 @@ name: Automated Facebook Scraper
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # Runs every 30 minutes
-  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
     - name: Checkout Repository
@@ -24,6 +25,9 @@ jobs:
     - name: Install Playwright Browsers
       run: npx playwright install chromium --with-deps
 
+    - name: Restore Facebook Session
+      run: echo '${{ secrets.FACEBOOK_SESSION }}' > facebook-session.json
+
     - name: Run Facebook Scraper
       env:
         CI: true
@@ -31,4 +35,4 @@ jobs:
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         FB_EMAIL: ${{ secrets.FB_EMAIL }}
         FB_PASSWORD: ${{ secrets.FB_PASSWORD }}
-      run: node scraper.js
+      run: node scraper.js --single-run
