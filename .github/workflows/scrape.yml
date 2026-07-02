@@ -26,7 +26,14 @@ jobs:
       run: npx playwright install chromium --with-deps
 
     - name: Restore Facebook Session
-      run: echo '${{ secrets.FACEBOOK_SESSION }}' > facebook-session.json
+      env:
+        SESSION_DATA: ${{ secrets.FACEBOOK_SESSION }}
+      run: echo "$SESSION_DATA" > facebook-session.json
+
+    - name: Verify Session File
+      run: |
+        echo "Size: $(wc -c < facebook-session.json) bytes"
+        echo "Preview: $(head -c 30 facebook-session.json)"
 
     - name: Run Facebook Scraper
       env:
