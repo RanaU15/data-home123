@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 # Runtime data / sensitive session files
+facebook-profile/
 facebook-session.json
 status.json
 posts.json

@@ -189,7 +189,6 @@ async function updatePostPermalinkInSupabase(temporaryId, newPermalink, facebook
                 id: newPermalink,
                 permalink: newPermalink,
                 facebook_post_id: facebookPostId,
-                temporary_id: null,
                 needs_permalink: false
             })
             .eq("temporary_id", temporaryId);
@@ -229,7 +228,6 @@ async function upsertPostToSupabase(posts) {
                             id: post.permalink,
                             permalink: post.permalink,
                             facebook_post_id: post.facebook_post_id,
-                            temporary_id: null,
                             needs_permalink: false,
                             body: post.body,
                             likes: post.likes,

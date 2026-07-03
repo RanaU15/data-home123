@@ -1,4 +1,4 @@
-// AUTH REFACTOR: Removed { chromium } import here, handled in auth.js
+const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
@@ -17,9 +17,6 @@ const {
     normalizeFacebookPostId,
     checkDuplicateInSupabase
 } = require("./supabase");
-
-// AUTH REFACTOR: Import new auth helper
-const auth = require("./auth");
 
 // Configuration for Multiple Groups
 const GROUPS = [
@@ -41,14 +38,14 @@ const GROUPS = [
     }
 ];
 
-// AUTH REFACTOR: Removed SESSION_FILE constant
+const SESSION_FILE = path.join(__dirname, "facebook-session.json");
 const JSON_FILE = path.join(__dirname, "posts.json");
 const CSV_FILE = path.join(__dirname, "posts.csv");
 const STATUS_FILE = path.join(__dirname, "status.json");
 const MAX_SCROLL_COUNT = 25;
 
 // Global browser state to keep browser alive across scheduled runs
-// AUTH REFACTOR: Removed global browser object
+let browser = null;
 let context = null;
 let page = null;
 let isScraping = false;
@@ -210,8 +207,102 @@ function isTodayPost(timestamp) {
     return false;
 }
 
-// AUTH REFACTOR: autoLogin(), initBrowser(), and verifySession() have been entirely removed.
-// All browser initialization and session verification is now securely managed by auth.js using persistent profiles.
+// Auto Login Function
+async function autoLogin() {
+    const email = process.env.FB_EMAIL;
+    const password = process.env.FB_PASSWORD;
+
+    if (!email || !password) {
+        console.error("Session expired and FB_EMAIL / FB_PASSWORD not found in environment. Please add them or run npm run login.");
+        updateHealthStatus({ running: false, last_error: "Session expired, no credentials provided" });
+        process.exit(1);
+    }
+
+    console.log("Attempting automatic login...");
+    await page.goto("https://www.facebook.com/login", { waitUntil: "networkidle", timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await page.screenshot({ path: 'login-page.png', fullPage: true });
+    // Fill credentials
+    await page.waitForSelector('input[name="email"]', { timeout: 30000 });
+    await page.fill('input[name="email"]', email);
+    await page.waitForTimeout(1000);
+    await page.waitForSelector('input[name="pass"]', { timeout: 30000 });
+    await page.fill('input[name="pass"]', password);
+    await page.waitForTimeout(1000);
+    await page.click('button[name="login"]').catch(() =>
+        page.click('button[type="submit"]')
+    );
+
+    console.log("Submitted login credentials, waiting for navigation...");
+    try {
+        await page.waitForURL(/.*facebook\.com\/(?!(login|.*login\.php)).*/, { timeout: 60000 });
+        console.log("Automatic login successful! Saving new session...");
+        await page.waitForTimeout(5000);
+        await context.storageState({ path: SESSION_FILE });
+        return true;
+    } catch (err) {
+        console.error("Automatic login failed! Please check your credentials or run npm run login manually.", err.message);
+        updateHealthStatus({ running: false, last_error: "Automatic login failed" });
+        process.exit(1);
+    }
+}
+
+// Initialize or Recreate Browser
+async function initBrowser(isRestart = false) {
+    if (browser && browser.isConnected()) {
+        await browser.close().catch(() => { });
+    }
+
+    const isCI = process.env.CI === 'true';
+    browser = await chromium.launch({
+        headless: isCI ? true : false,
+        args: isCI ? [
+            '--no-sandbox',
+            '--disable-setuid-sandbox', 
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlDetection',
+            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        ] : []
+    });
+    
+    if (process.env.CI === 'true') {
+        context = await browser.newContext({
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 (compatible; Googlebot/2.1)'
+        });
+    } else if (fs.existsSync(SESSION_FILE)) {
+        context = await browser.newContext({ storageState: SESSION_FILE });
+    } else {
+        context = await browser.newContext();
+    }
+    
+    page = await context.newPage();
+}
+
+// Verify Facebook Session
+async function verifySession() {
+    try {
+        if (process.env.CI === 'true') {
+            console.log("CI mode: logging in fresh with FB credentials...");
+            return await autoLogin();
+        }
+        if (!fs.existsSync(SESSION_FILE)) {
+            return await autoLogin();
+        }
+        await page.goto("https://www.facebook.com/", { 
+            waitUntil: "domcontentloaded", 
+            timeout: 60000 
+        });
+        const currentUrl = page.url();
+        if (currentUrl.includes("/login") || currentUrl.includes("login.php")) {
+            console.error("Session expired. Redirected to login page.");
+            return await autoLogin();
+        }
+        return true;
+    } catch (err) {
+        console.error("verifySession error:", err.message);
+        return await autoLogin();
+    }
+}
 
 // SQLite removed completely
 
@@ -219,38 +310,14 @@ function isTodayPost(timestamp) {
 async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingFacebookPostIds, existingTemporaryIds, allPostsData) {
     console.log(`\nGroup ${groupIndex}/${totalGroups}`);
 
-    console.log("Opening group...");
-    await targetPage.goto(group.url, {
-        waitUntil: "domcontentloaded",
-        timeout: 60000
-    });
-    console.log("DOM loaded");
-
-    console.log("Waiting for feed...");
+    await targetPage.goto(group.url, { waitUntil: "networkidle", timeout: 60000 });
+    
     try {
-        await Promise.race([
-            targetPage.waitForSelector('div[role="feed"]', { timeout: 30000 }),
-            targetPage.waitForSelector('[data-pagelet="GroupFeed"]', { timeout: 30000 })
-        ]);
-        console.log("Feed found");
-        await targetPage.waitForTimeout(3000);
+        await targetPage.waitForSelector('div[role="feed"]', { timeout: 30000 });
     } catch (e) {
-        console.log("Reloading page...");
-        await targetPage.reload({
-            waitUntil: "domcontentloaded"
-        });
-        
         try {
-            await Promise.race([
-                targetPage.waitForSelector('div[role="feed"]', { timeout: 30000 }),
-                targetPage.waitForSelector('[data-pagelet="GroupFeed"]', { timeout: 30000 })
-            ]);
-            console.log("Feed loaded after reload");
-            await targetPage.waitForTimeout(3000);
-        } catch (reloadErr) {
-            console.log("Navigation failed");
-            throw reloadErr; // Handled by outer retry loop
-        }
+            await targetPage.waitForSelector('[data-pagelet="GroupFeed"]', { timeout: 10000 });
+        } catch (e2) {}
     }
     
     await targetPage.waitForTimeout(3000 + Math.random() * 2000); // Human-like delay
@@ -520,86 +587,34 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     let permalinkObj = null;
                     let bestUrl = null;
                     let bestTimestamp = "Today";
-                    let bestType = "UNKNOWN";
 
-                    // 1. Gather all anchors in the feed card
-                    const anchors = Array.from(el.querySelectorAll('a[href]'));
-                    
-                    let urls = anchors.map(a => {
-                        let href = a.getAttribute("href") || "";
-                        // Normalize relative URLs to absolute
-                        if (href.startsWith('/')) {
-                            href = 'https://www.facebook.com' + href;
-                        }
-                        
-                        // Clean tracking parameters
-                        try {
-                            const parsed = new URL(href, 'https://www.facebook.com');
-                            parsed.searchParams.delete('__cft__[0]');
-                            parsed.searchParams.delete('__cft__');
-                            parsed.searchParams.delete('__tn__');
-                            parsed.searchParams.delete('mibextid');
-                            parsed.searchParams.delete('refsrc');
-                            parsed.searchParams.delete('refid');
-                            href = parsed.toString();
-                        } catch (e) {}
-                        
-                        return { 
-                            href, 
-                            text: (a.innerText || "").trim(),
-                            isProfile: href.includes('/user/') || href.includes('profile.php') || href.includes('comment_id') || href.includes('p.php')
-                        };
-                    }).filter(u => !u.isProfile);
+                    const links = [...el.querySelectorAll('a[href*="/posts/"], a[href*="/permalink/"], a[href*="/photo.php"], a[href*="/story.php"], a[href*="multi_permalinks="], a[href*="story_fbid="], a[href*="fbid="], a[href*="/watch/"], a[href*="/reel/"]')];
 
-                    // 2. Strict priority matching for permalinks
-                    const patterns = [
-                        { regex: /facebook\.com\/groups\/[^\/]+\/(posts|permalink)\/\d+/i, type: "GROUP_POST" },
-                        { regex: /facebook\.com\/share\/p\//i, type: "SHARE" },
-                        { regex: /facebook\.com\/watch\/\?v=/i, type: "WATCH" },
-                        { regex: /facebook\.com\/reel\//i, type: "REEL" },
-                        { regex: /facebook\.com\/story\.php\?story_fbid=/i, type: "STORY" },
-                        { regex: /facebook\.com\/photo\/?\?fbid=/i, type: "PHOTO" }
-                    ];
-
-                    for (const pattern of patterns) {
-                        const match = urls.find(u => pattern.regex.test(u.href));
-                        if (match) {
-                            bestUrl = match.href;
-                            bestType = pattern.type;
-                            
-                            // Attempt to get timestamp
-                            if (match.text && match.text.length > 0 && match.text.length < 20) {
-                                bestTimestamp = match.text;
-                            } else {
-                                // Fallback timestamp extraction
-                                const tsMatch = urls.find(u => u.text && (u.text.includes('h') || u.text.includes('m') || u.text.includes('d') || u.text.includes('Just') || u.text.includes('Today')));
-                                if (tsMatch) bestTimestamp = tsMatch.text;
+                    for (const a of links) {
+                        const href = a.getAttribute("href") || "";
+                        if (!href.includes("/user/") && !href.includes("profile.php") && !href.includes("comment_id") && !href.includes("p.php")) {
+                            bestUrl = href;
+                            if (a.innerText && a.innerText.trim()) {
+                                bestTimestamp = a.innerText.trim();
                             }
-                            break; // Stop at highest priority
+                            break;
                         }
                     }
 
                     if (!bestUrl) {
-                        // Fallback to data-ft attribute if no standard URLs found
                         const dataFtEl = el.querySelector('[data-ft]');
                         if (dataFtEl) {
                             const ft = dataFtEl.getAttribute('data-ft');
                             try {
                                 const parsedFt = JSON.parse(ft);
-                                if (parsedFt.mf_story_key) {
-                                    bestUrl = `https://www.facebook.com/posts/${parsedFt.mf_story_key}`;
-                                    bestType = "DATA_FT_STORY";
-                                }
-                                else if (parsedFt.top_level_post_id) {
-                                    bestUrl = `https://www.facebook.com/posts/${parsedFt.top_level_post_id}`;
-                                    bestType = "DATA_FT_POST";
-                                }
+                                if (parsedFt.mf_story_key) bestUrl = `/posts/${parsedFt.mf_story_key}`;
+                                else if (parsedFt.top_level_post_id) bestUrl = `/posts/${parsedFt.top_level_post_id}`;
                             } catch (e) { }
                         }
                     }
 
                     if (bestUrl) {
-                        permalinkObj = { url: bestUrl, timestamp: bestTimestamp, type: bestType };
+                        permalinkObj = { url: bestUrl, timestamp: bestTimestamp };
                     }
 
                     let bodyText = passedBody || "";
@@ -870,35 +885,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
             const timestamp = data.permalinkObj ? (data.permalinkObj.timestamp || "Today") : "Today";
             let rawPermalink = data.permalinkObj ? data.permalinkObj.url : null;
-            let urlType = data.permalinkObj ? data.permalinkObj.type : "UNKNOWN";
-
-            // If permalink is missing, OR it's just a PHOTO fallback (which breaks videos),
-            // open a temporary page to extract the true canonical URL
-            if (rawPermalink && (urlType === "PHOTO" || urlType === "UNKNOWN")) {
-                try {
-                    const tempPage = await context.newPage();
-                    await tempPage.goto(rawPermalink, { waitUntil: "domcontentloaded", timeout: 15000 });
-                    
-                    const canonicalUrl = await tempPage.evaluate(() => {
-                        const ogUrl = document.querySelector('meta[property="og:url"]');
-                        if (ogUrl && ogUrl.content) return ogUrl.content;
-                        
-                        const linkCanonical = document.querySelector('link[rel="canonical"]');
-                        if (linkCanonical && linkCanonical.href) return linkCanonical.href;
-                        
-                        return null;
-                    });
-                    
-                    if (canonicalUrl && !canonicalUrl.includes('photo.php') && !canonicalUrl.includes('photo/?')) {
-                        rawPermalink = canonicalUrl;
-                        urlType = "CANONICAL_META";
-                    }
-                    await tempPage.close();
-                } catch (tempErr) {
-                    // Ignore temp page errors, fallback to whatever rawPermalink we already had
-                }
-            }
-
             let permalink = cleanPermalink(rawPermalink);
             let facebookPostId = normalizeFacebookPostId(permalink);
             let temporaryId = null;
@@ -943,7 +929,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             
             if (needsFallback && permalink && permalink.startsWith("http")) {
                 try {
-                    const fallbackPage = await context.newPage();
+                    const fallbackPage = await browser.newPage();
                     await fallbackPage.goto(permalink, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
                     await fallbackPage.waitForTimeout(3000).catch(() => {});
                     
@@ -1015,7 +1001,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             }
 
             let hasPerm = facebookPostId ? existingFacebookPostIds.has(facebookPostId) : false;
-            let hasTemp = existingTemporaryIds.has(temporaryId);
+            let hasTemp = !facebookPostId ? existingTemporaryIds.has(temporaryId) : false;
             
             let duplicateReason = "";
 
@@ -1030,7 +1016,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 hasUrlDup = await checkDuplicateInSupabase(groupId, null, permalink, null);
             }
             
-            if (!hasPerm && !hasUrlDup && !hasTemp) {
+            if (!facebookPostId && !hasUrlDup && !hasTemp) {
                 hasTemp = await checkDuplicateInSupabase(groupId, null, null, temporaryId);
                 if (hasTemp) existingTemporaryIds.add(temporaryId);
             }
@@ -1252,12 +1238,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 facebook_video_url: (data.has_video && permalink && permalink.startsWith("http")) ? permalink : null
             };
 
-            // Permalink Validation Logging
-            console.log(`\nFacebook Post ID:\n${facebookPostId || "N/A"}`);
-            console.log(`Original URL:\n${rawPermalink || "N/A"}`);
-            console.log(`Final Canonical URL:\n${permalink || "N/A"}`);
-            console.log(`URL Type:\n${urlType || "UNKNOWN"}\n`);
-
             try {
                 const upsertRes = await upsertPostToSupabase(postObj);
                 if (upsertRes && upsertRes.error) {
@@ -1358,14 +1338,29 @@ async function runScrapeCycle() {
         try {
             // [DEBUG LOG ADDED]: Log before checking/launching browser
             console.log("Checking browser state...");
-            // AUTH REFACTOR: Delegate authentication check and browser recovery completely to auth.js
-            await auth.ensureLoggedIn();
-            
-            // Re-sync local globals with the managed persistent profile
-            context = auth.getContext();
-            page = auth.getPage();
-            
+            if (!browser || !browser.isConnected() || !page || page.isClosed()) {
+                // [DEBUG LOG ADDED]: Log browser launch attempt
+                console.log("Launching browser...");
+                await initBrowser();
+                // [DEBUG LOG ADDED]: Log successful browser launch
+                console.log("Browser launched.");
+            } else {
+                // [DEBUG LOG ADDED]: Log if browser is already running
+                console.log("Browser already running.");
+            }
+
+            // [DEBUG LOG ADDED]: Log before verifying session
+            console.log("Loading Facebook session...");
+            const isSessionValid = await verifySession();
+            // [DEBUG LOG ADDED]: Log after session check
             console.log("Session verified.");
+
+            if (!isSessionValid) {
+                // [DEBUG LOG ADDED]: Log early exit condition for invalid session
+                console.log("Returning because session is invalid.");
+                isScraping = false;
+                return;
+            }
 
             // [DEBUG LOG ADDED]: Log before scanning groups
             console.log(`Loading groups... Found ${GROUPS.length} groups.`);
@@ -1401,13 +1396,10 @@ async function runScrapeCycle() {
                         console.error(`Error processing group (attempt ${attempt}):`, err);
                         if (attempt < 3 && !isShuttingDown) {
                             await new Promise(resolve => setTimeout(resolve, 5000));
-                            if (!context || !page || page.isClosed()) {
+                            if (!browser || !browser.isConnected() || !page || page.isClosed()) {
                                 // [DEBUG LOG ADDED]: Log browser recovery
                                 console.log("Reinitializing browser for recovery...");
-                                // AUTH REFACTOR: Use auth.js to recover persistent session
-                                await auth.recoverSession();
-                                context = auth.getContext();
-                                page = auth.getPage();
+                                await initBrowser(true);
                             }
                         } else {
                             updateHealthStatus({ last_error: err.message });
@@ -1540,9 +1532,8 @@ async function handleExit() {
 
     updateHealthStatus({ running: false });
 
-    // AUTH REFACTOR: Safely close persistent context instead of browser object
-    if (context) {
-        await context.close().catch(() => { });
+    if (browser && browser.isConnected()) {
+        await browser.close().catch(() => { });
     }
     console.log("Exited cleanly.");
     process.exit(0);
