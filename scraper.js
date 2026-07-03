@@ -221,6 +221,7 @@ async function autoLogin() {
     console.log("Attempting automatic login...");
     await page.goto("https://www.facebook.com/login", { waitUntil: "networkidle", timeout: 60000 });
     await page.waitForTimeout(3000);
+    await page.screenshot({ path: 'login-page.png', fullPage: true });
     // Fill credentials
     await page.waitForSelector('input[name="email"]', { timeout: 30000 });
     await page.fill('input[name="email"]', email);
