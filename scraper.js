@@ -213,36 +213,67 @@ async function autoLogin() {
     const password = process.env.FB_PASSWORD;
 
     if (!email || !password) {
-        console.error("Session expired and FB_EMAIL / FB_PASSWORD not found in environment. Please add them or run npm run login.");
-        updateHealthStatus({ running: false, last_error: "Session expired, no credentials provided" });
+        console.error("FB_EMAIL / FB_PASSWORD not set.");
         process.exit(1);
     }
 
     console.log("Attempting automatic login...");
-    await page.goto("https://www.facebook.com/login", { waitUntil: "networkidle", timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await page.screenshot({ path: 'login-page.png', fullPage: true });
-    // Fill credentials
-    await page.waitForSelector('input[name="email"]', { timeout: 30000 });
-    await page.fill('input[name="email"]', email);
-    await page.waitForTimeout(1000);
-    await page.waitForSelector('input[name="pass"]', { timeout: 30000 });
-    await page.fill('input[name="pass"]', password);
-    await page.waitForTimeout(1000);
-    await page.click('button[name="login"]').catch(() =>
-        page.click('button[type="submit"]')
-    );
-
-    console.log("Submitted login credentials, waiting for navigation...");
+    
     try {
-        await page.waitForURL(/.*facebook\.com\/(?!(login|.*login\.php)).*/, { timeout: 60000 });
-        console.log("Automatic login successful! Saving new session...");
+        // Go to Facebook homepage first
+        await page.goto("https://www.facebook.com/", { 
+            waitUntil: "domcontentloaded", 
+            timeout: 60000 
+        });
+        await page.waitForTimeout(3000);
+        await page.screenshot({ path: 'step1-homepage.png', fullPage: true });
+        
+        // Check if already logged in
+        const currentUrl = page.url();
+        if (!currentUrl.includes('/login')) {
+            console.log("Already logged in!");
+            return true;
+        }
+        
+        console.log("On login page, filling credentials...");
+        await page.screenshot({ path: 'step2-login-page.png', fullPage: true });
+        
+        // Type email using keyboard
+        await page.click('input[name="email"]');
+        await page.waitForTimeout(500);
+        await page.keyboard.type(email, { delay: 100 });
+        await page.waitForTimeout(500);
+        await page.screenshot({ path: 'step3-email-filled.png' });
+        
+        // Tab to password and type
+        await page.keyboard.press('Tab');
+        await page.waitForTimeout(500);
+        await page.keyboard.type(password, { delay: 100 });
+        await page.waitForTimeout(500);
+        await page.screenshot({ path: 'step4-password-filled.png' });
+        
+        // Press Enter to submit
+        await page.keyboard.press('Enter');
+        console.log("Submitted login, waiting for navigation...");
         await page.waitForTimeout(5000);
+        await page.screenshot({ path: 'step5-after-submit.png', fullPage: true });
+        
+        // Check if login succeeded
+        const afterUrl = page.url();
+        if (afterUrl.includes('/login') || afterUrl.includes('login.php')) {
+            console.error("Login failed - still on login page");
+            await context.storageState({ path: SESSION_FILE });
+            process.exit(1);
+        }
+        
+        console.log("Automatic login successful! Saving new session...");
+        await page.waitForTimeout(3000);
         await context.storageState({ path: SESSION_FILE });
         return true;
+        
     } catch (err) {
-        console.error("Automatic login failed! Please check your credentials or run npm run login manually.", err.message);
-        updateHealthStatus({ running: false, last_error: "Automatic login failed" });
+        console.error("autoLogin error:", err.message);
+        await page.screenshot({ path: 'error-screenshot.png', fullPage: true }).catch(() => {});
         process.exit(1);
     }
 }
