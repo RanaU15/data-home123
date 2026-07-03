@@ -251,6 +251,8 @@ async function upsertPostToSupabase(posts) {
                             post_url: post.post_url,
                             post_created_at: post.post_created_at,
                             post_time_text: post.post_time_text,
+                            facebook_post_datetime: post.facebook_post_datetime,
+                            facebook_post_time_text: post.facebook_post_time_text,
                             scraped_at: post.scraped_at,
                             facebook_video_url: post.facebook_video_url
                         };
@@ -260,8 +262,11 @@ async function upsertPostToSupabase(posts) {
                             .update(updatePayload)
                             .eq("id", temp.id);
                             
-                        if (updateRes.error && updateRes.error.message.includes("facebook_video_url") && updateRes.error.message.includes("schema cache")) {
-                            delete updatePayload.facebook_video_url;
+                        if (updateRes.error && (updateRes.error.message.includes("schema cache") || updateRes.error.message.includes("Could not find the"))) {
+                            if (updateRes.error.message.includes("facebook_video_url")) delete updatePayload.facebook_video_url;
+                            if (updateRes.error.message.includes("facebook_post_datetime")) delete updatePayload.facebook_post_datetime;
+                            if (updateRes.error.message.includes("facebook_post_time_text")) delete updatePayload.facebook_post_time_text;
+                            
                             updateRes = await supabase
                                 .from("posts")
                                 .update(updatePayload)
@@ -327,7 +332,9 @@ async function upsertPostToSupabase(posts) {
             temporary_id: post.temporary_id,
             needs_permalink: post.needs_permalink,
             facebook_post_id: post.facebook_post_id,
-            facebook_video_url: post.facebook_video_url
+            facebook_video_url: post.facebook_video_url,
+            facebook_post_datetime: post.facebook_post_datetime,
+            facebook_post_time_text: post.facebook_post_time_text
         }));
 
         let { data, error } = await supabase
@@ -337,15 +344,26 @@ async function upsertPostToSupabase(posts) {
                 ignoreDuplicates: false
             });
 
-        if (error && error.message.includes("facebook_video_url") && error.message.includes("schema cache")) {
-            console.warn(`\n⚠️  WARNING: The 'facebook_video_url' column is missing in your Supabase database!`);
-            console.warn(`⚠️  Please go to your Supabase Dashboard -> SQL Editor and run:`);
-            console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_video_url TEXT;`);
-            console.warn(`⚠️  Retrying upload without the video URL to prevent crashing...\n`);
+        if (error && (error.message.includes("schema cache") || error.message.includes("Could not find the"))) {
+            if (error.message.includes("facebook_video_url")) {
+                console.warn(`\n⚠️  WARNING: The 'facebook_video_url' column is missing in your Supabase database!`);
+                console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_video_url TEXT;`);
+            }
+            if (error.message.includes("facebook_post_datetime")) {
+                console.warn(`\n⚠️  WARNING: The 'facebook_post_datetime' column is missing in your Supabase database!`);
+                console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_post_datetime TIMESTAMPTZ;`);
+                console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_post_time_text TEXT;`);
+            }
+            console.warn(`⚠️  Retrying upload without the missing columns to prevent crashing...\n`);
             
             const fallbackPosts = cleanPosts.map(p => {
-                const { facebook_video_url, ...rest } = p;
-                return rest;
+                const copy = { ...p };
+                if (error.message.includes("facebook_video_url")) delete copy.facebook_video_url;
+                if (error.message.includes("facebook_post_datetime")) {
+                    delete copy.facebook_post_datetime;
+                    delete copy.facebook_post_time_text;
+                }
+                return copy;
             });
             
             const fallbackRes = await supabase
@@ -380,6 +398,30 @@ async function deletePostFromSupabase(postId) {
         await supabase.from("posts").delete().eq("id", postId);
     } catch (err) {
         console.error(`❌ Error rolling back post ${postId}:`, err.message);
+    }
+}
+
+// ===== VIDEO EXTRACTION IMPROVEMENT =====
+async function getPostStatusInSupabase(groupId, facebookPostId, temporaryId) {
+    if (!supabase) return null;
+    try {
+        let query = supabase.from("posts").select("id, video_urls, has_video, images, body").eq("group_id", groupId);
+        
+        if (facebookPostId) {
+            query = query.eq("facebook_post_id", facebookPostId);
+        } else if (temporaryId) {
+            query = query.eq("temporary_id", temporaryId);
+        } else {
+            return null;
+        }
+        
+        const { data, error } = await query.limit(1);
+        if (!error && data && data.length > 0) {
+            return data[0];
+        }
+        return null;
+    } catch (err) {
+        return null;
     }
 }
 
@@ -440,5 +482,6 @@ module.exports = {
     uploadVideoToSupabase,
     deleteImageFromSupabase,
     normalizeFacebookPostId,
-    checkDuplicateInSupabase
+    checkDuplicateInSupabase,
+    getPostStatusInSupabase
 };

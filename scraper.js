@@ -15,7 +15,8 @@ const {
     uploadVideoToSupabase,
     deleteImageFromSupabase,
     normalizeFacebookPostId,
-    checkDuplicateInSupabase
+    checkDuplicateInSupabase,
+    getPostStatusInSupabase
 } = require("./supabase");
 
 // AUTH REFACTOR: Import new auth helper
@@ -214,6 +215,188 @@ function isTodayPost(timestamp) {
 // All browser initialization and session verification is now securely managed by auth.js using persistent profiles.
 
 // SQLite removed completely
+
+// ===== VIDEO EXTRACTION IMPROVEMENT =====
+async function extractPlayableVideoUrl(context, permalink) {
+    if (!permalink || !permalink.startsWith("http")) return [];
+    
+    let videoPage = null;
+    let extractedMp4 = null;
+    let extractedHls = null;
+    let networkListener = null;
+
+    try {
+        console.log(`Opening permalink...`);
+        videoPage = await context.newPage();
+        
+        // 14. Prevent memory leaks: define listener and remove it later
+        networkListener = (response) => {
+            try {
+                const url = response.url();
+                
+                // 6. Listen to every network request for video URLs
+                if (url.includes('video.xx.fbcdn.net') || 
+                    url.includes('fbcdn.net/v/t') && (url.includes('.mp4') || url.includes('.m3u8')) ||
+                    url.includes('.mp4') ||
+                    url.includes('.m3u8') ||
+                    url.includes('.mpd') ||
+                    url.includes('video/mp4') ||
+                    url.includes('application/vnd.apple.mpegurl')) {
+                    
+                    if (url.includes('.m3u8') || url.includes('.mpd') || url.includes('apple.mpegurl')) {
+                        console.log(`Network request captured`);
+                        console.log(`Video response captured`);
+                        console.log(`Found HLS`);
+                        if (!extractedHls) extractedHls = url;
+                    } else if (url.includes('.mp4') || url.includes('video.xx.fbcdn') || url.includes('video/mp4')) {
+                        console.log(`Network request captured`);
+                        console.log(`Video response captured`);
+                        console.log(`Found MP4`);
+                        if (!extractedMp4) extractedMp4 = url;
+                    }
+                }
+            } catch(e) {}
+        };
+        
+        videoPage.on('response', networkListener);
+        
+        // 1. Open the permalink
+        // 2. Wait until the page is fully interactive
+        await videoPage.goto(permalink, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+        console.log(`Waiting for player...`);
+        
+        const startTime = Date.now();
+        const maxWaitTime = 30000; // 10. Wait up to 30 seconds
+        let attempt = 1;
+        
+        // 9. Retry extraction multiple times
+        while (Date.now() - startTime < maxWaitTime) {
+            console.log(`attempt ${attempt}`);
+            
+            if (extractedMp4 || extractedHls) {
+                break;
+            }
+            
+            // 3. Wait for a video element
+            const playerSelectors = 'video, video[src], div[data-video-id], div[role="application"], video[playsinline]';
+            const playerLocator = videoPage.locator(playerSelectors).first();
+            
+            if (await playerLocator.count().catch(()=>0) > 0) {
+                console.log(`Player found`);
+                
+                // 4. Scroll the player into view
+                await playerLocator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(()=>{});
+                
+                // 5. Simulate a real mouse click on the player
+                await playerLocator.click({ force: true, delay: 100, timeout: 2000 }).catch(()=>{});
+                console.log(`Player clicked`);
+            }
+            
+            // 7. Inspect the video element itself
+            const domUrls = await videoPage.evaluate(() => {
+                let mp4 = null;
+                let hls = null;
+                const videoEl = document.querySelector('video');
+                if (videoEl) {
+                    const src = videoEl.src || videoEl.currentSrc;
+                    if (src && src.startsWith('http') && !src.includes('blob:')) {
+                        if (src.includes('.m3u8') || src.includes('.mpd')) hls = src;
+                        else mp4 = src;
+                    }
+                    const sourceEl = videoEl.querySelector('source');
+                    if (sourceEl && sourceEl.src && sourceEl.src.startsWith('http') && !sourceEl.src.includes('blob:')) {
+                        if (sourceEl.src.includes('.m3u8') || sourceEl.src.includes('.mpd')) hls = sourceEl.src;
+                        else mp4 = sourceEl.src;
+                    }
+                }
+                return { mp4, hls };
+            }).catch(() => ({ mp4: null, hls: null }));
+            
+            if (domUrls.mp4 && !extractedMp4) {
+                console.log(`Video element src`);
+                extractedMp4 = domUrls.mp4;
+            } else if (domUrls.hls && !extractedHls) {
+                console.log(`Video element src`);
+                extractedHls = domUrls.hls;
+            }
+            
+            // 8. If the video URL is inside GraphQL JSON, extract it
+            const graphqlUrls = await videoPage.evaluate(() => {
+                let hdUrl = null;
+                let sdUrl = null;
+                const scripts = Array.from(document.querySelectorAll('script'));
+                for (const script of scripts) {
+                    const text = script.innerText;
+                    if (!text) continue;
+                    
+                    const hdMatch = text.match(/"(?:playable_url_quality_hd|browser_native_hd_url)"\s*:\s*"([^"]+)"/);
+                    if (hdMatch && hdMatch[1]) {
+                        try { hdUrl = JSON.parse(`"${hdMatch[1].replace(/\\/g, '\\\\')}"`).replace(/\\\//g, '/'); } 
+                        catch(e) { hdUrl = hdMatch[1].replace(/\\\//g, '/'); }
+                    }
+                    
+                    const sdMatch = text.match(/"(?:playable_url|browser_native_sd_url)"\s*:\s*"([^"]+)"/);
+                    if (sdMatch && sdMatch[1]) {
+                        try { sdUrl = JSON.parse(`"${sdMatch[1].replace(/\\/g, '\\\\')}"`).replace(/\\\//g, '/'); } 
+                        catch(e) { sdUrl = sdMatch[1].replace(/\\\//g, '/'); }
+                    }
+                    
+                    if (hdUrl || sdUrl) break;
+                }
+                return { hd: hdUrl, sd: sdUrl };
+            }).catch(() => ({ hd: null, sd: null }));
+            
+            if (graphqlUrls.hd && !extractedMp4) {
+                console.log(`GraphQL video URL`);
+                extractedMp4 = graphqlUrls.hd; 
+            } else if (graphqlUrls.sd && !extractedMp4 && !extractedHls) {
+                console.log(`GraphQL video URL`);
+                extractedMp4 = graphqlUrls.sd;
+            }
+            
+            if (extractedMp4 || extractedHls) {
+                break;
+            }
+            
+            // wait 2 sec
+            await videoPage.waitForTimeout(2000).catch(()=>{});
+            
+            // scroll
+            await videoPage.mouse.wheel(0, 300).catch(()=>{});
+            console.log(`scroll`);
+            console.log(`click again`); // The next loop iteration will click again if player found
+            
+            attempt++;
+        }
+        
+        // 11. Prefer MP4. If unavailable, save the HLS (.m3u8) URL.
+        let finalUrl = null;
+        if (extractedMp4) finalUrl = extractedMp4;
+        else if (extractedHls) finalUrl = extractedHls;
+        
+        if (finalUrl) {
+            console.log(`Final extracted URL:\n${finalUrl}`);
+            return [finalUrl];
+        }
+        
+        // 12. If no stream URL can be extracted, store the Reel permalink instead
+        console.log(`No playable video URL found.`);
+        console.log(`Reason for failure:\nCould not intercept or extract any valid MP4/HLS streams after 30 seconds.`);
+        return [permalink];
+        
+    } catch (err) {
+        console.log(`Reason for failure:\n${err.message}`);
+        return [permalink]; 
+    } finally {
+        // 14. Remove listeners after extraction
+        if (videoPage) {
+            if (networkListener) {
+                videoPage.off('response', networkListener);
+            }
+            await videoPage.close().catch(() => {});
+        }
+    }
+}
 
 // Scrape a single group
 async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingFacebookPostIds, existingTemporaryIds, allPostsData) {
@@ -868,7 +1051,143 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 continue;
             }
 
-            const timestamp = data.permalinkObj ? (data.permalinkObj.timestamp || "Today") : "Today";
+            // --- ORIGINAL FACEBOOK TIMESTAMP EXTRACTION ---
+            let facebookPostDatetime = null;
+            let facebookPostTimeText = null;
+            let timestampSource = "None";
+
+            try {
+                // Priority 1: Look for <time> and extract datetime / aria-label
+                let timeLocator = feedUnit.locator('time').first();
+                if (await timeLocator.count().catch(()=>0) > 0) {
+                    facebookPostDatetime = await timeLocator.getAttribute('datetime').catch(()=>null);
+                    facebookPostTimeText = await timeLocator.getAttribute('aria-label').catch(()=>null);
+                    
+                    if (!facebookPostDatetime || !facebookPostTimeText) {
+                        const utime = await timeLocator.getAttribute('data-utime').catch(()=>null);
+                        if (utime) {
+                            facebookPostDatetime = new global.Date(parseInt(utime) * 1000).toISOString();
+                        }
+                    }
+                    if (facebookPostDatetime || facebookPostTimeText) {
+                        timestampSource = "datetime attribute / time element";
+                    }
+                }
+
+                // Priority 2: Inspect nearby elements (a[role="link"] usually)
+                if (!facebookPostDatetime && !facebookPostTimeText) {
+                    let tsLocator = feedUnit.locator('a[role="link"][tabindex="0"], a.x1i10hfl').filter({ hasText: /^(Just now|\d+\s*[mhdw]|Yesterday|\d{1,2}\s+[a-zA-Z]+.*)$/i }).first();
+                    if (await tsLocator.count().catch(()=>0) > 0) {
+                        facebookPostTimeText = await tsLocator.getAttribute('aria-label').catch(()=>null);
+                        
+                        if (!facebookPostTimeText) {
+                            facebookPostTimeText = await tsLocator.getAttribute('data-tooltip-content').catch(()=>null);
+                        }
+                        if (!facebookPostTimeText) {
+                            facebookPostTimeText = await tsLocator.getAttribute('data-tooltip').catch(()=>null);
+                        }
+                        
+                        const utime = await tsLocator.getAttribute('data-utime').catch(()=>null);
+                        if (utime) {
+                            facebookPostDatetime = new global.Date(parseInt(utime) * 1000).toISOString();
+                        }
+                        
+                        if (facebookPostDatetime || facebookPostTimeText) {
+                            timestampSource = "aria-label / data-tooltip / data-utime nearby elements";
+                        }
+                    }
+                }
+
+                // Priority 3: Hover tooltip for relative times
+                if (!facebookPostDatetime && (!facebookPostTimeText || /^(Just now|\d+\s*[mhdw]|Yesterday)$/i.test(facebookPostTimeText))) {
+                    let tsLocator = feedUnit.locator('a[role="link"][tabindex="0"], a.x1i10hfl, span').filter({ hasText: /^(Just now|\d+\s*[mhdw]|Yesterday|\d{1,2}\s+[a-zA-Z]+.*)$/i }).first();
+                    if (await tsLocator.count().catch(()=>0) > 0) {
+                        await tsLocator.hover({ timeout: 2000, force: true }).catch(() => {});
+                        await targetPage.waitForTimeout(1000).catch(() => {});
+                        
+                        const tooltip = targetPage.locator('div[role="tooltip"] span, div.__fb-light-mode span, span[dir="auto"]').filter({ hasText: /at \d{1,2}:\d{2}/i }).last();
+                        if (await tooltip.count().catch(()=>0) > 0) {
+                            facebookPostTimeText = await tooltip.innerText().catch(()=>null);
+                            timestampSource = "hover tooltip";
+                        }
+                    }
+                }
+            } catch (err) {
+                console.log("Timestamp extraction error:", err.message);
+            }
+
+            if (facebookPostTimeText) {
+                facebookPostTimeText = facebookPostTimeText.trim().replace(/^.*?says:\s*/i, '');
+            }
+
+            // Convert text to ISO if we don't have datetime yet
+            if (!facebookPostDatetime && facebookPostTimeText) {
+                try {
+                    let cleanStr = facebookPostTimeText.replace(/ at /gi, ' ').replace(/, /g, ' ').replace(/^[A-Za-z]+day\s*/i, '');
+                    const parsedDate = new global.Date(cleanStr);
+                    if (!isNaN(parsedDate.getTime())) {
+                        facebookPostDatetime = parsedDate.toISOString();
+                    }
+                } catch (e) {}
+            }
+
+            // Priority 4: Fallback to permalink if ALL failed
+            if (!facebookPostDatetime && !facebookPostTimeText) {
+                let rawPermalink = data.permalinkObj ? data.permalinkObj.url : null;
+                if (rawPermalink && rawPermalink.startsWith("http")) {
+                    console.log("Timestamp missing from feed card. Triggering permalink fallback...");
+                    try {
+                        const tempPage = await context.newPage();
+                        await tempPage.goto(rawPermalink, { waitUntil: "domcontentloaded", timeout: 15000 });
+                        
+                        const extractedFromPage = await tempPage.evaluate(() => {
+                            let text = null;
+                            let dt = null;
+                            const timeEl = document.querySelector('time');
+                            if (timeEl) {
+                                dt = timeEl.getAttribute('datetime') || timeEl.getAttribute('data-utime');
+                                text = timeEl.getAttribute('aria-label') || timeEl.innerText;
+                            }
+                            return { dt, text };
+                        });
+                        
+                        if (extractedFromPage.text) facebookPostTimeText = extractedFromPage.text;
+                        if (extractedFromPage.dt) {
+                            if (/^\d+$/.test(extractedFromPage.dt)) {
+                                facebookPostDatetime = new global.Date(parseInt(extractedFromPage.dt) * 1000).toISOString();
+                            } else {
+                                facebookPostDatetime = extractedFromPage.dt;
+                            }
+                        }
+                        
+                        await tempPage.close();
+                        if (facebookPostDatetime || facebookPostTimeText) {
+                            timestampSource = "permalink fallback";
+                        }
+                    } catch (e) {
+                        console.log("Permalink fallback for timestamp failed.");
+                    }
+                }
+            }
+            
+            console.log("\n=========================");
+            console.log("TIMESTAMP EXTRACTION");
+            console.log("=========================");
+            console.log(`Source:\n${timestampSource}`);
+            console.log(`facebook_post_datetime:\n${facebookPostDatetime}`);
+            console.log(`facebook_post_time_text:\n${facebookPostTimeText}`);
+            console.log("=========================\n");
+            
+            if (!facebookPostDatetime && !facebookPostTimeText) {
+                let tempRawPerm = data.permalinkObj ? data.permalinkObj.url : "Unknown";
+                console.log(`Timestamp extraction FAILED\n\nPermalink:\n${tempRawPerm}\n\nFacebook Post ID:\n${normalizeFacebookPostId(tempRawPerm) || "Unknown"}\n\nReason:\nNo timestamp found in feed card or permalink fallback.\n`);
+            }
+            // Final safety defaults if completely unrecoverable
+            if (!facebookPostTimeText) {
+                facebookPostTimeText = data.permalinkObj ? (data.permalinkObj.timestamp || "Unknown") : "Unknown";
+            }
+            
+            const timestamp = facebookPostTimeText;
             let rawPermalink = data.permalinkObj ? data.permalinkObj.url : null;
             let urlType = data.permalinkObj ? data.permalinkObj.type : "UNKNOWN";
 
@@ -903,21 +1222,10 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             let facebookPostId = normalizeFacebookPostId(permalink);
             let temporaryId = null;
 
-            if (!isTodayPost(timestamp)) {
+            let isOldPost = !isTodayPost(timestamp);
+            if (isOldPost) {
                 console.log("Old post detected");
-                updateHealthStatus({ old_posts: healthStatus.old_posts + 1 });
-                oldPostCount++;
-                processedIndex = i + 1;
-                if (oldPostCount >= 5) {
-                    console.log("Group stopped because 5 consecutive old posts found.");
-                    stopGroup = true;
-                    cleanupNetworkListener();
-                    break;
-                }
-                cleanupNetworkListener();
-                continue;
             } else {
-                oldPostCount = 0;
                 console.log("Today's post");
             }
 
@@ -1053,22 +1361,101 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             if (isDuplicate || isUpdateCase) console.log(`Reason:\n${duplicateReason || "temporary_id"}\n`);
             console.log("====================================\n");
 
+            // ===== VIDEO EXTRACTION IMPROVEMENT =====
+            let forceExtractVideo = false;
+            let existingDbRow = null;
+            let extractedVideoUrls = [];
+
+            if (data.has_video) {
+                console.log("Video detected");
+                if (isDuplicate || isOldPost || isUpdateCase) {
+                    console.log("Checking database...");
+                    existingDbRow = await getPostStatusInSupabase(groupId, facebookPostId, temporaryId);
+                    
+                    if (existingDbRow) {
+                        const dbVideos = existingDbRow.video_urls || [];
+                        if (dbVideos.length === 0 || dbVideos[0] === "None") {
+                            console.log("Duplicate found");
+                            console.log("video_urls empty");
+                            forceExtractVideo = true;
+                        } else {
+                            console.log("Duplicate found");
+                            console.log("Video already stored");
+                            console.log("Skipping extraction");
+                        }
+                    } else if (isOldPost && !isDuplicate) {
+                        // If it's an old post but doesn't exist in DB at all, it's not a duplicate, but we don't want to extract video if we aren't saving it.
+                        // Wait, if it doesn't exist, we skip anyway. 
+                    }
+                } else {
+                    // It's a new post with a video, we must extract it.
+                    forceExtractVideo = true;
+                }
+            }
+
+            if (forceExtractVideo) {
+                // Ensure permalink is properly resolved from PHOTO to Canonical before opening
+                if (permalink && (permalink.includes('photo.php') || permalink.includes('photo/?'))) {
+                    try {
+                        const tempPage = await context.newPage();
+                        await tempPage.goto(permalink, { waitUntil: "domcontentloaded", timeout: 15000 });
+                        const canonicalUrl = await tempPage.evaluate(() => {
+                            const ogUrl = document.querySelector('meta[property="og:url"]');
+                            if (ogUrl && ogUrl.content) return ogUrl.content;
+                            const linkCanonical = document.querySelector('link[rel="canonical"]');
+                            if (linkCanonical && linkCanonical.href) return linkCanonical.href;
+                            return null;
+                        });
+                        if (canonicalUrl && !canonicalUrl.includes('photo.php') && !canonicalUrl.includes('photo/?')) {
+                            permalink = canonicalUrl;
+                            if (!facebookPostId) facebookPostId = normalizeFacebookPostId(permalink);
+                        }
+                        await tempPage.close();
+                    } catch (e) {}
+                }
+                
+                extractedVideoUrls = await extractPlayableVideoUrl(context, permalink);
+                if (extractedVideoUrls.length > 0) {
+                    data.video_urls = extractedVideoUrls;
+                    data.video_extraction_method = "Permalink";
+                    
+                    if (existingDbRow) {
+                        console.log("Updating existing database...");
+                        const { supabase } = require('./supabase');
+                        const { error } = await supabase.from('posts').update({ video_urls: extractedVideoUrls }).eq('id', existingDbRow.id);
+                        if (!error) console.log("Database updated successfully");
+                        else console.log(`Database update failed: ${error.message}`);
+                    }
+                }
+            }
+
             // Duplicate detection BEFORE downloading images or saving anything.
-            if (isDuplicate && !isUpdateCase) {
-                updateHealthStatus({ duplicates_skipped: healthStatus.duplicates_skipped + 1 });
+            if ((isDuplicate || isOldPost) && !isUpdateCase) {
+                if (isDuplicate) {
+                    updateHealthStatus({ duplicates_skipped: healthStatus.duplicates_skipped + 1 });
+                    duplicateCount++;
+                } else {
+                    updateHealthStatus({ old_posts: healthStatus.old_posts + 1 });
+                    oldPostCount++;
+                }
+
                 scrapedThisRun.add(facebookPostId || temporaryId);
                 scrapedThisRun.add(temporaryId);
                 processedIndex = i + 1;
 
-                duplicateCount++;
                 if (duplicateCount >= 4) {
                     console.log("Group stopped because 4 consecutive duplicates found.");
                     stopGroup = true;
                     cleanupNetworkListener();
                     break;
                 }
+                if (oldPostCount >= 5) {
+                    console.log("Group stopped because 5 consecutive old posts found.");
+                    stopGroup = true;
+                    cleanupNetworkListener();
+                    break;
+                }
                 
-                // CRITICAL FIX: Actually skip the rest of the loop for duplicates!
                 cleanupNetworkListener();
                 continue;
             } else {
@@ -1224,9 +1611,11 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 author_profile_url: data.author_profile_url,
                 author_avatar: data.author_avatar,
                 body: data.bodyText,
-                post_time_text: timestamp,
-                post_created_at: parseFacebookDate(timestamp),
-                post_date: timestamp,
+                facebook_post_datetime: facebookPostDatetime,
+                facebook_post_time_text: facebookPostTimeText || timestamp,
+                post_time_text: facebookPostTimeText || timestamp,
+                post_created_at: facebookPostDatetime || parseFacebookDate(timestamp),
+                post_date: facebookPostTimeText || timestamp,
                 permalink: data.permalinkObj ? permalink : null,
                 post_url: data.permalinkObj ? permalink : null,
                 likes: data.likes || 0,
@@ -1258,11 +1647,16 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             console.log(`Final Canonical URL:\n${permalink || "N/A"}`);
             console.log(`URL Type:\n${urlType || "UNKNOWN"}\n`);
 
+            console.log(`Saving Timestamp\n\nfacebook_post_datetime:\n${postObj.facebook_post_datetime}\n\nfacebook_post_time_text:\n${postObj.facebook_post_time_text}\n`);
+
             try {
                 const upsertRes = await upsertPostToSupabase(postObj);
                 if (upsertRes && upsertRes.error) {
                     throw new Error(upsertRes.error.message);
                 }
+                
+                console.log(`Supabase Timestamp Saved\n\nfacebook_post_datetime:\n${postObj.facebook_post_datetime}\n\nfacebook_post_time_text:\n${postObj.facebook_post_time_text}\n`);
+                
                 console.log("Saved to Supabase");
                 console.log("Saved new post");
                 console.log(`Database updated:\nYES\nvideo_urls: ${JSON.stringify(postObj.video_urls)}`);

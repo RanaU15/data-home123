@@ -34,6 +34,8 @@ export interface Post {
   needs_permalink?: boolean;
   facebook_post_id?: string;
   facebook_video_url?: string;
+  facebook_post_datetime?: string;
+  facebook_post_time_text?: string;
 }
 
 const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL || 'https://gimjsxpwteluwiopcrqq.supabase.co';
@@ -91,31 +93,24 @@ export function formatDate(dateStr?: string): string {
 }
 
 export function getDisplayDate(post: Post): string {
-  const dateToFormat = post.post_created_at || post.post_date || post.date;
+  if (post.facebook_post_time_text && post.facebook_post_time_text.trim() !== "") {
+    return post.facebook_post_time_text;
+  }
+  
+  const dateToFormat = post.facebook_post_datetime || post.post_created_at || post.post_date || post.date;
   
   if (dateToFormat) {
     try {
       const d = new Date(dateToFormat);
       if (!isNaN(d.getTime())) {
-        const now = new Date();
-        const diffMs = now.getTime() - d.getTime();
-        const diffSecs = Math.floor(diffMs / 1000);
-        const diffMins = Math.floor(diffSecs / 60);
-        const diffHrs = Math.floor(diffMins / 60);
-        const diffDays = Math.floor(diffHrs / 24);
-
-        if (diffSecs < 60) return 'Just now';
-        if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-        if (diffHrs < 24) return `${diffHrs} hour${diffHrs > 1 ? 's' : ''} ago`;
-        
-        if (diffDays === 1) return 'Yesterday';
-        if (diffDays > 1 && diffDays < 7) return `${diffDays} days ago`;
-        
         return new Intl.DateTimeFormat('en-US', {
-          year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
-          month: 'short',
-          day: 'numeric'
-        }).format(d);
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        }).format(d); // Outputs e.g., "July 3, 2026, 8:12 AM"
       }
     } catch (e) {
       // Ignore and fallback
@@ -124,10 +119,6 @@ export function getDisplayDate(post: Post): string {
 
   if (post.post_time_text && post.post_time_text.trim() !== "") {
     return post.post_time_text;
-  }
-  
-  if (post.scraped_at) {
-    return formatDate(post.scraped_at);
   }
   
   return 'Unknown date';
