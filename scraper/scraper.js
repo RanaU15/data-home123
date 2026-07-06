@@ -450,7 +450,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             console.log(`Current URL: ${currentUrl}`);
             console.log(`Current Title: ${currentTitle}`);
             
-            const groupId = group.url.match(/groups\/(\d+)/) ? group.url.match(/groups\/(\d+)/)[1] : groupIndex;
             await targetPage.screenshot({ path: `debug-${groupId}.png`, fullPage: true });
             
             const html = await targetPage.content();
