@@ -2,13 +2,11 @@
   "name": "facebook-group-scraper",
   "version": "1.0.0",
   "description": "Scrape Facebook group posts using Playwright and save to JSON, CSV, and Supabase",
-  "main": "scraper.js",
+  "main": "scraper/scraper.js",
   "scripts": {
-    "login": "node login.js",
-    "scrape": "node scraper.js",
-    "start": "node scraper.js",
-    "dashboard": "node dashboard/server.js",
-    "view-db": "node view_db.js",
+    "login": "node scraper/login.js",
+    "scrape": "node scraper/scraper.js",
+    "start": "node scraper/scraper.js",
     "postinstall": "playwright install chromium --with-deps"
   },
   "dependencies": {
