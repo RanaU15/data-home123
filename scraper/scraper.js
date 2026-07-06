@@ -1,7 +1,7 @@
 // AUTH REFACTOR: Removed { chromium } import here, handled in auth.js
 const fs = require("fs");
 const path = require("path");
-require("dotenv").config();
+require("dotenv").config({ path: path.join(__dirname, '../.env') });
 const https = require("https");
 const http = require("http");
 const crypto = require("crypto");
@@ -1749,10 +1749,10 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 }
 
 // Main Scrape Cycle Function
-async function runScrapeCycle() {
+async function runOnceScrape() {
     try {
         // [DEBUG LOG ADDED]: Trace execution start
-        console.log("=== runScrapeCycle started ===");
+        console.log("=== runOnceScrape started ===");
 
         if (isScraping) {
             // [DEBUG LOG ADDED]: Log early exit condition
@@ -1959,10 +1959,8 @@ async function handleExit() {
 
     updateHealthStatus({ running: false });
 
-    // AUTH REFACTOR: Safely close persistent context instead of browser object
-    if (context) {
-        await context.close().catch(() => { });
-    }
+    // AUTH REFACTOR: Safely close headless browser via auth module
+    await auth.close();
     console.log("Exited cleanly.");
     process.exit(0);
 }
@@ -1972,15 +1970,9 @@ process.on("SIGTERM", handleExit);
 
 // Initialize scraper scheduler
 if (require.main === module) {
-    if (process.env.CI === 'true') {
-        console.log("Running in CI single-execution mode...");
-        runScrapeCycle().then(() => process.exit(0)).catch(() => process.exit(1));
-    } else {
-        console.log("Running in standalone scheduled mode...");
-        runScrapeCycle();
-        setInterval(runScrapeCycle, 30 * 60 * 1000);
-    }
+    console.log("Running scraper once. PM2 or System Cron should manage scheduling.");
+    runOnceScrape().then(() => process.exit(0)).catch(() => process.exit(1));
 } else {
     // Export for trigger-server.js — all existing logic above is unchanged
-    module.exports = { runScrapeCycle };
+    module.exports = { runOnceScrape, runScrapeCycle: runOnceScrape };
 }

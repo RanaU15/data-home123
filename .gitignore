@@ -9,11 +9,15 @@ lerna-debug.log*
 
 # Runtime data / sensitive session files
 facebook-session.json
+facebook-cookies.json
 status.json
 posts.json
 posts.csv
 posts.db
 images/
+*.png
+*.html
+*.zip
 
 # Dependencies
 node_modules

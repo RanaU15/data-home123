@@ -1,12 +1,11 @@
 // auth.js
-// AUTH REFACTOR: Authentication helper for persistent browser profile
+// AUTH REFACTOR: Authentication helper for stored cookies
 const { chromium } = require("playwright");
-const path = require("path");
+const { loadCookiesIntoStorageState } = require("./auth/cookies");
 
+let browser = null;
 let context = null;
 let page = null;
-
-const PROFILE_PATH = path.join(__dirname, "facebook-profile");
 
 async function launchBrowser() {
     if (context) {
@@ -14,44 +13,57 @@ async function launchBrowser() {
             await context.close();
         } catch (e) { }
     }
+    if (browser) {
+        try {
+            await browser.close();
+        } catch (e) { }
+    }
 
-    console.log("Launching persistent browser profile...");
-    // AUTH REFACTOR: Using launchPersistentContext instead of browser.newContext
-    context = await chromium.launchPersistentContext(PROFILE_PATH, {
+    console.log("Launching headless browser...");
+    // MUST run headless: true, NO persistent profile
+    browser = await chromium.launch({
         headless: true,
-        viewport: null,
         args: [
-            "--disable-blink-features=AutomationControlled"
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage"
         ]
     });
 
-    const pages = context.pages();
-    page = pages.length > 0 ? pages[0] : await context.newPage();
+    console.log("Loading stored cookies...");
+    let storageState;
+    try {
+        storageState = loadCookiesIntoStorageState();
+    } catch (e) {
+        console.error("Failed to load cookies:", e.message);
+        throw e;
+    }
+
+    context = await browser.newContext({
+        storageState: storageState,
+        viewport: null
+    });
+
+    page = await context.newPage();
 }
 
 async function isLoggedOut() {
     await page.waitForTimeout(2000);
     const emailInput = await page.$('input[name="email"]');
     const passInput = await page.$('input[name="pass"]');
-    if (emailInput && passInput) {
+    if (emailInput || passInput) {
         return true;
     }
     const profileElement = await page.$('[aria-label="Your profile"]');
     if (profileElement) {
         return false;
     }
-    return true;
-}
-
-async function waitForManualLogin() {
-    console.log("=============================================================");
-    console.log("Please login manually...");
-    console.log("Waiting for successful login...");
-    console.log("=============================================================");
-
-    // AUTH REFACTOR: Wait indefinitely for manual login
-    await page.waitForURL(/.*facebook\.com\/(?!(login|.*login\.php)).*/, { timeout: 0 });
-    console.log("Login complete. Resuming...");
+    // Also check url
+    if (page.url().includes('login') || page.url().includes('checkpoint')) {
+        return true;
+    }
+    return false;
 }
 
 async function ensureLoggedIn() {
@@ -59,25 +71,26 @@ async function ensureLoggedIn() {
         await launchBrowser();
     }
 
-    // AUTH REFACTOR: Go to Facebook and let it redirect naturally
+    console.log("Navigating to Facebook to check session...");
     await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
     console.log("Current URL:", page.url());
-    console.log("Current Title:", await page.title());
 
-    if (await isLoggedOut()) {
-        await waitForManualLogin();
+    if (await isLoggedOut() || page.url().includes("/login")) {
+        console.error("=============================================================");
+        console.error("SESSION_EXPIRED: Facebook cookies are invalid or expired.");
+        console.error("Please update facebook-cookies.json and restart.");
+        console.error("=============================================================");
+        throw new Error("SESSION_EXPIRED"); // Stop scraper immediately
     } else {
-        console.log("Already logged in. Skipping login step.");
+        console.log("Session verified via cookies. Already logged in.");
     }
 }
 
 async function restartBrowser() {
-    // AUTH REFACTOR: Reuse the same profile
     await launchBrowser();
 }
 
 async function recoverSession() {
-    // AUTH REFACTOR: Recovery using persistent profile
     await restartBrowser();
     await ensureLoggedIn();
 }
@@ -86,9 +99,12 @@ module.exports = {
     launchBrowser,
     ensureLoggedIn,
     isLoggedOut,
-    waitForManualLogin,
     restartBrowser,
     recoverSession,
     getContext: () => context,
-    getPage: () => page
+    getPage: () => page,
+    close: async () => {
+        if (context) await context.close().catch(() => {});
+        if (browser) await browser.close().catch(() => {});
+    }
 };
