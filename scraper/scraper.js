@@ -481,7 +481,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
     const scrapedThisRun = new Set();
 
     const matchGroup = group.url.match(/groups\/([^\/]+)/);
-    const groupId = matchGroup ? matchGroup[1] : "";
 
     while (!stopGroup && scrollCount < MAX_SCROLL_COUNT && !isShuttingDown) {
         if (targetPage.isClosed()) break;
