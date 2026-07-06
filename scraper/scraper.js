@@ -409,6 +409,27 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
     });
     console.log("DOM loaded");
 
+    const groupId = group.url.match(/groups\/(\d+)/) ? group.url.match(/groups\/(\d+)/)[1] : groupIndex;
+
+    console.log("========== GROUP DEBUG ==========");
+    console.log("Group:", group.name);
+    console.log("Current URL:", targetPage.url());
+    console.log("Current Title:", await targetPage.title());
+
+    const fs = require("fs");
+
+    await targetPage.screenshot({
+        path: `group-page-${groupId}.png`,
+        fullPage: true
+    });
+
+    fs.writeFileSync(
+        `group-page-${groupId}.html`,
+        await targetPage.content()
+    );
+
+    console.log("Saved group debug files.");
+
     console.log("Waiting for feed...");
     try {
         await Promise.race([
