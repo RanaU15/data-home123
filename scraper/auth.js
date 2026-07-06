@@ -30,8 +30,17 @@ async function launchBrowser() {
 }
 
 async function isLoggedOut() {
-    const url = page.url();
-    return url.includes('/login') || url.includes('login.php');
+    await page.waitForTimeout(2000);
+    const emailInput = await page.$('input[name="email"]');
+    const passInput = await page.$('input[name="pass"]');
+    if (emailInput && passInput) {
+        return true;
+    }
+    const profileElement = await page.$('[aria-label="Your profile"]');
+    if (profileElement) {
+        return false;
+    }
+    return true;
 }
 
 async function waitForManualLogin() {
@@ -52,6 +61,8 @@ async function ensureLoggedIn() {
 
     // AUTH REFACTOR: Go to Facebook and let it redirect naturally
     await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
+    console.log("Current URL:", page.url());
+    console.log("Current Title:", await page.title());
 
     if (await isLoggedOut()) {
         await waitForManualLogin();
