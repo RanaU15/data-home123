@@ -1051,143 +1051,8 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 continue;
             }
 
-            // --- ORIGINAL FACEBOOK TIMESTAMP EXTRACTION ---
-            let facebookPostDatetime = null;
-            let facebookPostTimeText = null;
-            let timestampSource = "None";
-
-            try {
-                // Priority 1: Look for <time> and extract datetime / aria-label
-                let timeLocator = feedUnit.locator('time').first();
-                if (await timeLocator.count().catch(()=>0) > 0) {
-                    facebookPostDatetime = await timeLocator.getAttribute('datetime').catch(()=>null);
-                    facebookPostTimeText = await timeLocator.getAttribute('aria-label').catch(()=>null);
-                    
-                    if (!facebookPostDatetime || !facebookPostTimeText) {
-                        const utime = await timeLocator.getAttribute('data-utime').catch(()=>null);
-                        if (utime) {
-                            facebookPostDatetime = new global.Date(parseInt(utime) * 1000).toISOString();
-                        }
-                    }
-                    if (facebookPostDatetime || facebookPostTimeText) {
-                        timestampSource = "datetime attribute / time element";
-                    }
-                }
-
-                // Priority 2: Inspect nearby elements (a[role="link"] usually)
-                if (!facebookPostDatetime && !facebookPostTimeText) {
-                    let tsLocator = feedUnit.locator('a[role="link"][tabindex="0"], a.x1i10hfl').filter({ hasText: /^(Just now|\d+\s*[mhdw]|Yesterday|\d{1,2}\s+[a-zA-Z]+.*)$/i }).first();
-                    if (await tsLocator.count().catch(()=>0) > 0) {
-                        facebookPostTimeText = await tsLocator.getAttribute('aria-label').catch(()=>null);
-                        
-                        if (!facebookPostTimeText) {
-                            facebookPostTimeText = await tsLocator.getAttribute('data-tooltip-content').catch(()=>null);
-                        }
-                        if (!facebookPostTimeText) {
-                            facebookPostTimeText = await tsLocator.getAttribute('data-tooltip').catch(()=>null);
-                        }
-                        
-                        const utime = await tsLocator.getAttribute('data-utime').catch(()=>null);
-                        if (utime) {
-                            facebookPostDatetime = new global.Date(parseInt(utime) * 1000).toISOString();
-                        }
-                        
-                        if (facebookPostDatetime || facebookPostTimeText) {
-                            timestampSource = "aria-label / data-tooltip / data-utime nearby elements";
-                        }
-                    }
-                }
-
-                // Priority 3: Hover tooltip for relative times
-                if (!facebookPostDatetime && (!facebookPostTimeText || /^(Just now|\d+\s*[mhdw]|Yesterday)$/i.test(facebookPostTimeText))) {
-                    let tsLocator = feedUnit.locator('a[role="link"][tabindex="0"], a.x1i10hfl, span').filter({ hasText: /^(Just now|\d+\s*[mhdw]|Yesterday|\d{1,2}\s+[a-zA-Z]+.*)$/i }).first();
-                    if (await tsLocator.count().catch(()=>0) > 0) {
-                        await tsLocator.hover({ timeout: 2000, force: true }).catch(() => {});
-                        await targetPage.waitForTimeout(1000).catch(() => {});
-                        
-                        const tooltip = targetPage.locator('div[role="tooltip"] span, div.__fb-light-mode span, span[dir="auto"]').filter({ hasText: /at \d{1,2}:\d{2}/i }).last();
-                        if (await tooltip.count().catch(()=>0) > 0) {
-                            facebookPostTimeText = await tooltip.innerText().catch(()=>null);
-                            timestampSource = "hover tooltip";
-                        }
-                    }
-                }
-            } catch (err) {
-                console.log("Timestamp extraction error:", err.message);
-            }
-
-            if (facebookPostTimeText) {
-                facebookPostTimeText = facebookPostTimeText.trim().replace(/^.*?says:\s*/i, '');
-            }
-
-            // Convert text to ISO if we don't have datetime yet
-            if (!facebookPostDatetime && facebookPostTimeText) {
-                try {
-                    let cleanStr = facebookPostTimeText.replace(/ at /gi, ' ').replace(/, /g, ' ').replace(/^[A-Za-z]+day\s*/i, '');
-                    const parsedDate = new global.Date(cleanStr);
-                    if (!isNaN(parsedDate.getTime())) {
-                        facebookPostDatetime = parsedDate.toISOString();
-                    }
-                } catch (e) {}
-            }
-
-            // Priority 4: Fallback to permalink if ALL failed
-            if (!facebookPostDatetime && !facebookPostTimeText) {
-                let rawPermalink = data.permalinkObj ? data.permalinkObj.url : null;
-                if (rawPermalink && rawPermalink.startsWith("http")) {
-                    console.log("Timestamp missing from feed card. Triggering permalink fallback...");
-                    try {
-                        const tempPage = await context.newPage();
-                        await tempPage.goto(rawPermalink, { waitUntil: "domcontentloaded", timeout: 15000 });
-                        
-                        const extractedFromPage = await tempPage.evaluate(() => {
-                            let text = null;
-                            let dt = null;
-                            const timeEl = document.querySelector('time');
-                            if (timeEl) {
-                                dt = timeEl.getAttribute('datetime') || timeEl.getAttribute('data-utime');
-                                text = timeEl.getAttribute('aria-label') || timeEl.innerText;
-                            }
-                            return { dt, text };
-                        });
-                        
-                        if (extractedFromPage.text) facebookPostTimeText = extractedFromPage.text;
-                        if (extractedFromPage.dt) {
-                            if (/^\d+$/.test(extractedFromPage.dt)) {
-                                facebookPostDatetime = new global.Date(parseInt(extractedFromPage.dt) * 1000).toISOString();
-                            } else {
-                                facebookPostDatetime = extractedFromPage.dt;
-                            }
-                        }
-                        
-                        await tempPage.close();
-                        if (facebookPostDatetime || facebookPostTimeText) {
-                            timestampSource = "permalink fallback";
-                        }
-                    } catch (e) {
-                        console.log("Permalink fallback for timestamp failed.");
-                    }
-                }
-            }
-            
-            console.log("\n=========================");
-            console.log("TIMESTAMP EXTRACTION");
-            console.log("=========================");
-            console.log(`Source:\n${timestampSource}`);
-            console.log(`facebook_post_datetime:\n${facebookPostDatetime}`);
-            console.log(`facebook_post_time_text:\n${facebookPostTimeText}`);
-            console.log("=========================\n");
-            
-            if (!facebookPostDatetime && !facebookPostTimeText) {
-                let tempRawPerm = data.permalinkObj ? data.permalinkObj.url : "Unknown";
-                console.log(`Timestamp extraction FAILED\n\nPermalink:\n${tempRawPerm}\n\nFacebook Post ID:\n${normalizeFacebookPostId(tempRawPerm) || "Unknown"}\n\nReason:\nNo timestamp found in feed card or permalink fallback.\n`);
-            }
-            // Final safety defaults if completely unrecoverable
-            if (!facebookPostTimeText) {
-                facebookPostTimeText = data.permalinkObj ? (data.permalinkObj.timestamp || "Unknown") : "Unknown";
-            }
-            
-            const timestamp = facebookPostTimeText;
+            // Scrape timestamp generation moved to right before save
+            const timestamp = data.permalinkObj ? (data.permalinkObj.timestamp || "Unknown") : "Unknown";
             let rawPermalink = data.permalinkObj ? data.permalinkObj.url : null;
             let urlType = data.permalinkObj ? data.permalinkObj.type : "UNKNOWN";
 
@@ -1602,6 +1467,39 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 return d.toISOString();
             }
 
+            // --- NEW SCRAPE TIMESTAMP VALIDATION ---
+            let facebookPostDatetime = null;
+            let facebookPostTimeText = null;
+
+            while (!facebookPostTimeText) {
+                const scrapedAt = new Date();
+                facebookPostDatetime = scrapedAt.toISOString();
+                
+                const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                const day = scrapedAt.getDate();
+                const month = months[scrapedAt.getMonth()];
+                const year = scrapedAt.getFullYear();
+                
+                let hours = scrapedAt.getHours();
+                const minutes = scrapedAt.getMinutes().toString().padStart(2, '0');
+                const ampm = hours >= 12 ? 'PM' : 'AM';
+                hours = hours % 12;
+                hours = hours ? hours : 12;
+                
+                const candidate = `${day} ${month} ${year} • ${hours}:${minutes} ${ampm}`;
+                
+                if (candidate && !candidate.includes("undefined") && !candidate.includes("NaN")) {
+                    facebookPostTimeText = candidate;
+                }
+            }
+
+            console.log("\n=========================");
+            console.log("SCRAPE TIME");
+            console.log("=========================");
+            console.log(`ISO:\n${facebookPostDatetime}`);
+            console.log(`\nDisplay:\n${facebookPostTimeText}`);
+            console.log("=========================\n");
+
             const postObj = {
                 id: permalink,
                 group_name: group.name,
@@ -1612,10 +1510,10 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 author_avatar: data.author_avatar,
                 body: data.bodyText,
                 facebook_post_datetime: facebookPostDatetime,
-                facebook_post_time_text: facebookPostTimeText || timestamp,
-                post_time_text: facebookPostTimeText || timestamp,
-                post_created_at: facebookPostDatetime || parseFacebookDate(timestamp),
-                post_date: facebookPostTimeText || timestamp,
+                facebook_post_time_text: facebookPostTimeText,
+                post_time_text: facebookPostTimeText,
+                post_created_at: facebookPostDatetime,
+                post_date: facebookPostTimeText,
                 permalink: data.permalinkObj ? permalink : null,
                 post_url: data.permalinkObj ? permalink : null,
                 likes: data.likes || 0,
@@ -1647,16 +1545,11 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             console.log(`Final Canonical URL:\n${permalink || "N/A"}`);
             console.log(`URL Type:\n${urlType || "UNKNOWN"}\n`);
 
-            console.log(`Saving Timestamp\n\nfacebook_post_datetime:\n${postObj.facebook_post_datetime}\n\nfacebook_post_time_text:\n${postObj.facebook_post_time_text}\n`);
-
             try {
                 const upsertRes = await upsertPostToSupabase(postObj);
                 if (upsertRes && upsertRes.error) {
                     throw new Error(upsertRes.error.message);
                 }
-                
-                console.log(`Supabase Timestamp Saved\n\nfacebook_post_datetime:\n${postObj.facebook_post_datetime}\n\nfacebook_post_time_text:\n${postObj.facebook_post_time_text}\n`);
-                
                 console.log("Saved to Supabase");
                 console.log("Saved new post");
                 console.log(`Database updated:\nYES\nvideo_urls: ${JSON.stringify(postObj.video_urls)}`);

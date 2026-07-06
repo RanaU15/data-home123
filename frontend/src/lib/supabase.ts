@@ -94,32 +94,11 @@ export function formatDate(dateStr?: string): string {
 
 export function getDisplayDate(post: Post): string {
   if (post.facebook_post_time_text && post.facebook_post_time_text.trim() !== "") {
-    return post.facebook_post_time_text;
-  }
-  
-  const dateToFormat = post.facebook_post_datetime || post.post_created_at || post.post_date || post.date;
-  
-  if (dateToFormat) {
-    try {
-      const d = new Date(dateToFormat);
-      if (!isNaN(d.getTime())) {
-        return new Intl.DateTimeFormat('en-US', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true
-        }).format(d); // Outputs e.g., "July 3, 2026, 8:12 AM"
-      }
-    } catch (e) {
-      // Ignore and fallback
+    const text = post.facebook_post_time_text.trim();
+    if (!/^(Just now|Today|Yesterday|.*ago.*|.*min.*|.*hr.*|.*hour.*|.*day.*|\d+\s*[mhdw]|Unknown|Invalid Date|null|undefined)$/i.test(text)) {
+      return text;
     }
   }
-
-  if (post.post_time_text && post.post_time_text.trim() !== "") {
-    return post.post_time_text;
-  }
   
-  return 'Unknown date';
+  return 'Time unavailable';
 }

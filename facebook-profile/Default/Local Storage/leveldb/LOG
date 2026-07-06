@@ -1,6 +1,0 @@
-2026/07/03-17:21:10.729 6064 Reusing MANIFEST D:\facbook\facebook-profile\Default\Local Storage\leveldb/MANIFEST-000001
-2026/07/03-17:21:10.739 6064 Recovering log #53
-2026/07/03-17:21:10.742 6064 Reusing old log D:\facbook\facebook-profile\Default\Local Storage\leveldb/000053.log 
-2026/07/03-17:22:10.759 6064 Level-0 table #58: started
-2026/07/03-17:22:10.776 6064 Level-0 table #58: 31205 bytes OK
-2026/07/03-17:22:10.777 6064 Delete type=0 #53
