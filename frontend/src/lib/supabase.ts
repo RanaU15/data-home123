@@ -81,6 +81,7 @@ export function formatDate(dateStr?: string): string {
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
     return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -93,22 +94,31 @@ export function formatDate(dateStr?: string): string {
 }
 
 export function getDisplayDate(post: Post): string {
-  if (post.facebook_post_datetime) {
+  const formatIST = (dateStr: string) => {
     try {
-      const d = new Date(post.facebook_post_datetime);
+      const d = new Date(dateStr);
       if (!isNaN(d.getTime())) {
-        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        const day = d.getDate();
-        const month = months[d.getMonth()];
-        const year = d.getFullYear();
-        let hours = d.getHours();
-        const minutes = d.getMinutes().toString().padStart(2, '0');
-        const ampm = hours >= 12 ? 'PM' : 'AM';
-        hours = hours % 12;
-        hours = hours ? hours : 12;
-        return `${day} ${month} ${year} • ${hours}:${minutes} ${ampm}`;
+        const formatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Kolkata',
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        });
+        const parts = formatter.formatToParts(d);
+        const p: Record<string, string> = {};
+        for (const part of parts) p[part.type] = part.value;
+        return `${p.day} ${p.month} ${p.year} • ${p.hour}:${p.minute} ${p.dayPeriod}`;
       }
     } catch(e) {}
+    return null;
+  };
+
+  if (post.facebook_post_datetime) {
+    const formatted = formatIST(post.facebook_post_datetime);
+    if (formatted) return formatted;
   }
   
   if (post.facebook_post_time_text && post.facebook_post_time_text.trim() !== "") {
@@ -119,13 +129,8 @@ export function getDisplayDate(post: Post): string {
   }
   
   if (post.scraped_at) {
-    try {
-      const d = new Date(post.scraped_at);
-      if (!isNaN(d.getTime())) {
-        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()} • ${d.getHours() % 12 || 12}:${d.getMinutes().toString().padStart(2, '0')} ${d.getHours() >= 12 ? 'PM' : 'AM'}`;
-      }
-    } catch(e) {}
+    const formatted = formatIST(post.scraped_at);
+    if (formatted) return formatted;
   }
   
   return 'Time unavailable';
