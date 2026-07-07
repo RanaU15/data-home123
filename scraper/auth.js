@@ -45,6 +45,28 @@ async function launchBrowser() {
         viewport: null
     });
 
+    const loadedCookies = await context.cookies();
+
+    console.log("==================================");
+    console.log("Cookies loaded into browser:", loadedCookies.length);
+
+    console.log(
+        loadedCookies
+            .filter(c =>
+                ["c_user", "xs", "fr", "datr", "sb"].includes(c.name)
+            )
+            .map(c => ({
+                name: c.name,
+                domain: c.domain,
+                path: c.path,
+                expires: c.expires,
+                secure: c.secure,
+                httpOnly: c.httpOnly
+            }))
+    );
+
+    console.log("==================================");
+
     page = await context.newPage();
 }
 
@@ -73,6 +95,26 @@ async function ensureLoggedIn() {
 
     console.log("Navigating to Facebook to check session...");
     await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
+
+    console.log("==================================");
+    console.log("Current URL:", page.url());
+    console.log("Current Title:", await page.title());
+
+    const pageCookies = await context.cookies("https://www.facebook.com");
+
+    console.log(
+        pageCookies
+            .filter(c =>
+                ["c_user", "xs", "fr", "datr", "sb"].includes(c.name)
+            )
+            .map(c => ({
+                name: c.name,
+                valueLength: c.value.length,
+                domain: c.domain
+            }))
+    );
+
+    console.log("==================================");
     console.log("Current URL:", page.url());
 
     if (await isLoggedOut() || page.url().includes("/login")) {
