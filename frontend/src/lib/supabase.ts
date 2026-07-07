@@ -22,7 +22,7 @@ export interface Post {
   comment_count?: number;
   share_count?: number;
   screenshot?: string;
-  images?: any;
+  image_urls?: string[];
   video_urls?: string[];
   video_thumbnail?: string;
   video_duration?: string;

@@ -267,6 +267,10 @@ async function upsertPostToSupabase(posts) {
                             if (updateRes.error.message.includes("facebook_video_url")) delete updatePayload.facebook_video_url;
                             if (updateRes.error.message.includes("facebook_post_datetime")) delete updatePayload.facebook_post_datetime;
                             if (updateRes.error.message.includes("facebook_post_time_text")) delete updatePayload.facebook_post_time_text;
+                            if (updateRes.error.message.includes("images")) {
+                                console.warn(`\n⚠️  WARNING: The 'images' column is missing in your Supabase database!`);
+                                delete updatePayload.images;
+                            }
                             
                             updateRes = await supabase
                                 .from("posts")
@@ -355,6 +359,10 @@ async function upsertPostToSupabase(posts) {
                 console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_post_datetime TIMESTAMPTZ;`);
                 console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_post_time_text TEXT;`);
             }
+            if (error.message.includes("images")) {
+                console.warn(`\n⚠️  CRITICAL WARNING: The 'images' column is missing in your Supabase database!`);
+                console.warn(`⚠️  Images will NOT be saved until you add this column!`);
+            }
             console.warn(`⚠️  Retrying upload without the missing columns to prevent crashing...\n`);
             
             const fallbackPosts = cleanPosts.map(p => {
@@ -364,6 +372,7 @@ async function upsertPostToSupabase(posts) {
                     delete copy.facebook_post_datetime;
                     delete copy.facebook_post_time_text;
                 }
+                if (error.message.includes("images")) delete copy.images;
                 return copy;
             });
             
@@ -406,7 +415,7 @@ async function deletePostFromSupabase(postId) {
 async function getPostStatusInSupabase(groupId, facebookPostId, temporaryId) {
     if (!supabase) return null;
     try {
-        let query = supabase.from("posts").select("id, video_urls, has_video, images, body").eq("group_id", groupId);
+        let query = supabase.from("posts").select("id, video_urls, has_video, image_urls, body").eq("group_id", groupId);
         
         if (facebookPostId) {
             query = query.eq("facebook_post_id", facebookPostId);
@@ -479,9 +488,6 @@ module.exports = {
     updatePostPermalinkInSupabase,
     deletePostFromSupabase,
     getExistingPermalinksForGroup,
-    uploadImageToSupabase,
-    uploadVideoToSupabase,
-    deleteImageFromSupabase,
     normalizeFacebookPostId,
     checkDuplicateInSupabase,
     getPostStatusInSupabase

@@ -1,13 +1,13 @@
 ---
-import { parseImages, getDisplayDate, type Post } from '../lib/supabase';
+import { getDisplayDate, type Post } from '../lib/supabase';
 
 interface Props {
   post: Post;
 }
 
 const { post } = Astro.props;
-// Never use screenshots, only parse actual uploaded images
-const images = parseImages(post.images, null);
+// Never use screenshots, use original Facebook URLs directly
+const images = (post.images || []).filter((img: string) => !img.includes('supabase.co'));
 const firstImage = images[0] || null;
 const imageCount = images.length;
 const truncatedBody = post.body ? (post.body.length > 100 ? post.body.slice(0, 100) + '...' : post.body) : 'No description available.';
@@ -19,7 +19,7 @@ if (!postRouteId) {
   postRouteId = post.id?.startsWith('http') ? encodeURIComponent(post.id) : post.id;
 }
 const hasVideo = post.has_video || false;
-const thumbnail = post.video_thumbnail || firstImage || '/image (3).png';
+const thumbnail = post.video_thumbnail || firstImage || null;
 ---
 
 <article 
@@ -27,12 +27,28 @@ const thumbnail = post.video_thumbnail || firstImage || '/image (3).png';
   onclick={`if(!event.target.closest('a, button, [role="button"]')) window.location.href='/posts/${postRouteId}'`}
 >
   <div class="relative aspect-video w-full overflow-hidden bg-slate-100 border-b border-slate-200">
-    <img 
-      src={thumbnail} 
-      alt={author + " post image"} 
-      loading="lazy" 
-      class="h-full w-full object-cover object-center transition-transform duration-300 hover:scale-105" 
-    />
+    {hasVideo && thumbnail ? (
+      <img 
+        src={thumbnail} 
+        alt={author + " video thumbnail"} 
+        loading="lazy" 
+        referrerpolicy="no-referrer"
+        class="h-full w-full object-cover object-center transition-transform duration-300 hover:scale-105" 
+      />
+    ) : images.length > 0 ? (
+      <div class="flex flex-col h-full w-full overflow-y-auto bg-slate-50 p-4 items-start justify-center gap-2">
+        {images.map((url, idx) => (
+          <a href={url} target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline text-xs break-all truncate w-full" onclick="event.stopPropagation()">
+            <span class="font-medium mr-1 text-slate-700">[{idx + 1}]</span>
+            {url}
+          </a>
+        ))}
+      </div>
+    ) : (
+      <div class="flex h-full w-full items-center justify-center bg-slate-100 text-slate-400">
+        <span class="text-sm font-medium">No Image</span>
+      </div>
+    )}
     
     {hasVideo && (
       <div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors pointer-events-none">

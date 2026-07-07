@@ -730,56 +730,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 }
             }
 
-            if (!method1Success) {
-                // Method 2: Visible DOM elements
-                try {
-                    let extracted = await feedUnit.evaluate((el) => {
-                        const containers = Array.from(el.querySelectorAll('div, span, p'));
-                        let bestText = "";
-                        const ignoreList = ["facebook", "sponsored", "suggested for you", "like", "comment", "share", "follow", "answer as", "write a comment", "learn more", "see translation"];
-                        for (const c of containers) {
-                            const style = window.getComputedStyle(c);
-                            if (style.display === 'none' || style.visibility === 'hidden' || c.offsetHeight === 0) continue;
-                            let txt = (c.innerText || "").trim();
-                            if (txt.length < 5) continue;
-                            let lowerTxt = txt.toLowerCase();
-                            let ignore = false;
-                            for (const term of ignoreList) {
-                                if (lowerTxt.includes(term)) { ignore = true; break; }
-                            }
-                            if (!ignore && txt.length > bestText.length) {
-                                bestText = txt;
-                            }
-                        }
-                        return bestText;
-                    });
-                    if (extracted && extracted.length > 0) {
-                        finalBody = extracted;
-                        method2Success = true;
-                        finalSource = "Visible DOM";
-                    }
-                } catch(e) {}
-
-                // Method 3: innerText
-                if (!method2Success) {
-                    try {
-                        let rawText = await feedUnit.innerText();
-                        if (rawText) {
-                            let cleanText = rawText
-                                .replace(/(facebook|sponsored|suggested for you|like|comment|share|follow|answer as|write a comment|learn more|see translation)/gi, '')
-                                .replace(/\b\d+\s*(likes?|comments?|shares?)\b/gi, '')
-                                .replace(/\n+/g, ' ')
-                                .replace(/\s+/g, ' ')
-                                .trim();
-                            if (cleanText && cleanText.length > 0) {
-                                finalBody = cleanText;
-                                method3Success = true;
-                                finalSource = "innerText";
-                            }
-                        }
-                    } catch(e) {}
-                }
-            }
 
             // --- META EXTRACTOR FUNCTION ---
             const extractMetadata = async (locator, passedBody = "") => {
@@ -998,16 +948,18 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     let video_duration = null; // Basic placeholder as requested
 
                     const imgEls = Array.from(el.querySelectorAll('img'));
-                    const images = [];
+                    const imageSet = new Set();
                     for (const img of imgEls) {
                         const src = img.getAttribute('src') || "";
-                        if (src && src.startsWith("http") && !src.includes("rsrc.php") && !src.includes("emoji") && !src.includes("avatar") && !src.includes("sticker") && !src.includes("p32x32") && !src.includes("p16x16") && !src.includes("p50x50") && !src.includes("s60x60") && !src.includes("badges") && !src.includes("profile") && !src.includes("reaction") && !src.includes("fb_icon") && !src.includes("spis_") && !src.includes("x1bwp2qo") && !src.includes("spacer") && !src.includes("cover")) {
+                        // Ensure it's an original Facebook image CDN URL
+                        if (src && src.startsWith("http") && src.includes("scontent") && src.includes("fbcdn.net") && !src.includes("rsrc.php") && !src.includes("emoji") && !src.includes("avatar") && !src.includes("profile")) {
                             const w = img.getAttribute('width');
                             const h = img.getAttribute('height');
                             if ((w && parseInt(w) < 150) || (h && parseInt(h) < 150)) continue;
-                            images.push(src);
+                            imageSet.add(src);
                         }
                     }
+                    const images = Array.from(imageSet);
                     
                     let post_type = "text";
                     if (has_video && images.length > 0) post_type = "mixed";
@@ -1492,23 +1444,45 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             await feedUnit.scrollIntoViewIfNeeded().catch(() => { });
             await targetPage.waitForTimeout(1000).catch(() => { });
 
-            const uploadedStoragePaths = [];
-            let uploadedCount = 0;
-
-            const imageUrls = [];
-            for (let j = 0; j < data.images.length; j++) {
-                const imgFilename = `post_${groupId}_${Date.now()}_${j + 1}.jpg`;
-                const imgBuffer = await downloadToBuffer(data.images[j]);
-                if (imgBuffer) {
-                    const imgUploadRes = await uploadImageToSupabase(imgBuffer, `post_images/${imgFilename}`, 'image/jpeg');
-                    if (imgUploadRes && imgUploadRes.publicUrl) {
-                        imageUrls.push(imgUploadRes.publicUrl);
-                        uploadedStoragePaths.push(imgUploadRes.storagePath);
-                        uploadedCount++;
-                        updateHealthStatus({ storage_uploads: healthStatus.storage_uploads + 1 });
-                    }
-                }
+            const imageUrls = data.images ? [...data.images] : [];
+            let videoUrls = data.video_urls ? [...data.video_urls] : [];
+            if (videoUrls.length === 0 && data.video_thumbnail) {
+                videoUrls = [data.video_thumbnail];
             }
+
+            console.log("\n========== MEDIA DEBUG ==========");
+            console.log(`Post ID: ${facebookPostId || temporaryId}`);
+            console.log(`Detected Images: ${data.images ? data.images.length : 0}`);
+            console.log(`Detected Videos: ${data.has_video ? (data.video_urls ? data.video_urls.length : 1) : 0}\n`);
+
+            console.log(`Extracted Image URLs:`);
+            if (imageUrls.length > 0) {
+                console.log(JSON.stringify(imageUrls, null, 2));
+            } else if ((data.images ? data.images.length : 0) > 0 || imageUrls.length === 0) {
+                console.log("No image URL extracted.");
+            }
+
+            console.log(`\nExtracted Video URLs:`);
+            if (videoUrls.length > 0) {
+                console.log(JSON.stringify(videoUrls, null, 2));
+            } else if (data.has_video || videoUrls.length === 0) {
+                console.log("No video URL extracted.");
+            }
+
+            console.log(`\nSaved Images:`);
+            if (imageUrls.length > 0) {
+                console.log(JSON.stringify(imageUrls, null, 2));
+            } else {
+                console.log("[]");
+            }
+
+            console.log(`\nSaved Videos:`);
+            if (videoUrls.length > 0) {
+                console.log(JSON.stringify(videoUrls, null, 2));
+            } else {
+                console.log("[]");
+            }
+            console.log("=================================\n");
 
             if (data.has_video && !isDuplicate && !isUpdateCase) {
                 if (permalink && permalink.startsWith("http")) {
@@ -1529,12 +1503,21 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             console.log(`- Card processing end: ${Date.now()}`);
             console.log("====================================\n");
 
-            if (uploadedCount > 0) {
-                console.log(`Uploaded ${uploadedCount} images from memory`);
-            }
+            console.log("====================================\n");
 
             // Final cleanup of Facebook UI labels before saving
             const cleanFacebookBody = (text) => {
+                if (!text) return "";
+                let lines = text.split('\n');
+                lines = lines.map(line => line.trim()).filter(line => {
+                    if (!line) return false;
+                    if (line.length > 20 && !line.includes(" ") && !line.startsWith("http") && /^[a-zA-Z0-9\-_]+$/.test(line)) return false;
+                    if (line.startsWith("{") && line.endsWith("}")) return false;
+                    if (line.includes("__reactProps")) return false;
+                    return true;
+                });
+                let cleaned = lines.join('\n');
+
                 const garbageList = [
                     "See less", "See more", "Continue reading", "Like", "Comment", "Reply", 
                     "Share", "Send", "Most Relevant", "Most recent", "View more comments", 
@@ -1547,7 +1530,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 const cleanupRegex = new RegExp(`(?:^|\\n)(?:${garbageList.join("|")}${groupNamePattern})\\s*$`, "gi");
                 const cleanupRegexStart = new RegExp(`^(?:${garbageList.join("|")}${groupNamePattern})\\s*\\n?`, "gi");
 
-                let cleaned = text;
                 let previous = "";
                 while (cleaned !== previous) {
                     previous = cleaned;
@@ -1555,6 +1537,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     cleaned = cleaned.replace(cleanupRegexStart, "").trim();
                 }
                 
+                if (cleaned.length > 30 && !cleaned.includes(" ") && !cleaned.startsWith("http")) return "";
                 return cleaned;
             };
             
@@ -1656,7 +1639,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 share_count: data.shares || 0,
                 images: imageUrls,
                 image_count: data.images ? data.images.length : 0,
-                video_urls: data.video_urls || [],
+                video_urls: videoUrls,
                 video_thumbnail: data.video_thumbnail || null,
                 video_duration: data.video_duration || null,
                 video_count: data.video_count || 0,
@@ -1703,10 +1686,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 console.error(`❌ Transaction failed for post ${postObj.id}. Rolling back storage and database...`, err.message);
                 updateHealthStatus({ last_error: err.message });
 
-                // Roll back Supabase Storage
-                for (const sp of uploadedStoragePaths) {
-                    await deleteImageFromSupabase(sp);
-                }
                 // Roll back Supabase Database
                 await deletePostFromSupabase(postObj.id);
             }
@@ -1867,7 +1846,7 @@ async function runOnceScrape() {
                     if (!existingCsvIds.has(post.id)) {
                         const cleanAuthor = post.author.replace(/"/g, '""');
                         const cleanBody = post.body.replace(/"/g, '""');
-                        const imagesJson = JSON.stringify(post.images).replace(/"/g, '""');
+                        const imagesJson = JSON.stringify(post.image_urls || []).replace(/"/g, '""');
                         csvContent += `"${post.id}","${post.group_name}","${post.group_url}","${cleanAuthor}","${post.post_date}","${post.permalink || ''}","${post.likes}","${post.comments}","${post.shares}","${post.screenshot}","${imagesJson}","${cleanBody}"\n`;
                     }
                 });
@@ -1946,7 +1925,7 @@ async function handleExit() {
             if (!existingCsvIds.has(post.id)) {
                 const cleanAuthor = post.author.replace(/"/g, '""');
                 const cleanBody = post.body.replace(/"/g, '""');
-                const imagesJson = JSON.stringify(post.images).replace(/"/g, '""');
+                const imagesJson = JSON.stringify(post.image_urls || []).replace(/"/g, '""');
                 csvContent += `"${post.id}","${post.group_name}","${post.group_url}","${cleanAuthor}","${post.post_date}","${post.permalink || ''}","${post.likes}","${post.comments}","${post.shares}","${post.screenshot}","${imagesJson}","${cleanBody}"\n`;
             }
         });
