@@ -1,6 +1,7 @@
 // AUTH REFACTOR: Removed { chromium } import here, handled in auth.js
 const fs = require("fs");
 const path = require("path");
+const { DateTime } = require('luxon');
 require("dotenv").config({ path: path.join(__dirname, '../.env') });
 const https = require("https");
 const http = require("http");
@@ -55,6 +56,331 @@ let page = null;
 let isScraping = false;
 let isShuttingDown = false;
 let processedIndex = 0;
+
+async function extractFacebookTimestamp(feedCard, page, permalink) {
+    const FB_TIMEZONE = 'Asia/Kolkata';
+    const result = {
+        facebook_post_datetime: null,
+        facebook_post_date_text: null,
+        facebook_time_source: "none"
+    };
+
+    console.log("\n========== FACEBOOK TIMESTAMP ==========");
+
+    try {
+        const tsEl = feedCard.locator('a[data-scraper-timestamp="true"]').first();
+        const hasTsEl = await tsEl.count().catch(() => 0) > 0;
+
+        const fullDatePattern = /\d{1,2}\s+[a-z]+\s+\d{4}.*\d{1,2}:\d{2}/i;
+        
+        const parseAbsolute = (text, sourceName) => {
+            if (!text) return false;
+            const cleaned = text
+                .replace(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)[,\s]+/i, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+                
+            const formats = [
+                "d MMMM yyyy 'at' HH:mm",   
+                "d MMMM yyyy 'at' h:mm a",  
+                "MMMM d, yyyy 'at' h:mm a", 
+                "MMMM d, yyyy 'at' HH:mm",
+                "d MMM yyyy 'at' HH:mm",
+                "d MMM yyyy 'at' h:mm a"
+            ];
+            
+            for (const fmt of formats) {
+                const attempt = DateTime.fromFormat(cleaned, fmt, { zone: FB_TIMEZONE });
+                if (attempt.isValid) { 
+                    result.facebook_post_datetime = attempt.toISO();
+                    result.facebook_post_date_text = text.trim();
+                    result.facebook_time_source = sourceName;
+                    return true;
+                }
+            }
+            // fallback to standard JS Date for unknown formats
+            const d = new Date(cleaned.replace(' at ', ' '));
+            if (!isNaN(d.getTime())) {
+                result.facebook_post_datetime = d.toISOString();
+                result.facebook_post_date_text = text.trim();
+                result.facebook_time_source = sourceName + " (fallback parse)";
+                return true;
+            }
+            return false;
+        };
+
+        // METHOD 1: Direct attributes on tsEl
+        if (hasTsEl) {
+            const attrs = ['aria-label', 'title', 'data-tooltip-content', 'data-utime'];
+            for (const attr of attrs) {
+                const val = await tsEl.getAttribute(attr).catch(() => null);
+                if (val) {
+                    if (attr === 'data-utime' && /^\d+$/.test(val)) {
+                        const d = new Date(parseInt(val) * 1000);
+                        result.facebook_post_datetime = d.toISOString();
+                        result.facebook_post_date_text = val;
+                        result.facebook_time_source = 'data-utime (direct)';
+                        return result;
+                    }
+                    if (fullDatePattern.test(val) && parseAbsolute(val, attr)) {
+                        console.log(`Source: ${result.facebook_time_source}`);
+                        console.log(`Raw: ${result.facebook_post_date_text}`);
+                        console.log(`ISO: ${result.facebook_post_datetime}`);
+                        console.log("========================================");
+                        return result;
+                    }
+                }
+            }
+            const childAria = await tsEl.locator('[aria-label]').first();
+            if (await childAria.count().catch(() => 0) > 0) {
+                const val = await childAria.getAttribute('aria-label').catch(() => null);
+                if (val && fullDatePattern.test(val)) {
+                    if (parseAbsolute(val, 'child aria-label')) {
+                        console.log(`Source: ${result.facebook_time_source}`);
+                        console.log(`Raw: ${result.facebook_post_date_text}`);
+                        console.log(`ISO: ${result.facebook_post_datetime}`);
+                        console.log("========================================");
+                        return result;
+                    }
+                }
+            }
+        }
+
+        // METHOD 1.5: Global data-utime check
+        const utimeEl = feedCard.locator('[data-utime]').first();
+        if (await utimeEl.count().catch(() => 0) > 0) {
+            const val = await utimeEl.getAttribute('data-utime').catch(() => null);
+            if (val && /^\d+$/.test(val)) {
+                const d = new Date(parseInt(val) * 1000);
+                result.facebook_post_datetime = d.toISOString();
+                result.facebook_post_date_text = val;
+                result.facebook_time_source = 'data-utime (global)';
+                console.log(`Source: ${result.facebook_time_source}`);
+                console.log(`Raw: ${result.facebook_post_date_text}`);
+                console.log(`ISO: ${result.facebook_post_datetime}`);
+                console.log("========================================");
+                return result;
+            }
+        }
+
+        // METHOD 2: Permalink Meta
+        if (permalink && permalink.startsWith("http")) {
+            try {
+                const tempPage = await page.context().newPage();
+                await tempPage.goto(permalink, { waitUntil: "domcontentloaded", timeout: 15000 });
+                const metaDate = await tempPage.evaluate(() => {
+                    const og = document.querySelector('meta[property="article:published_time"]');
+                    if (og && og.content) return og.content;
+                    const ogUp = document.querySelector('meta[property="og:updated_time"]');
+                    if (ogUp && ogUp.content) return ogUp.content;
+                    const timeTag = document.querySelector('time[datetime]');
+                    if (timeTag && timeTag.getAttribute('datetime')) return timeTag.getAttribute('datetime');
+                    
+                    const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+                    for (const script of scripts) {
+                        try {
+                            const data = JSON.parse(script.innerText);
+                            if (data.datePublished) return data.datePublished;
+                            if (data.dateCreated) return data.dateCreated;
+                        } catch(e){}
+                    }
+                    return null;
+                });
+                await tempPage.close();
+
+                if (metaDate) {
+                    const d = new Date(metaDate);
+                    if (!isNaN(d.getTime())) {
+                        result.facebook_post_datetime = d.toISOString();
+                        result.facebook_post_date_text = metaDate;
+                        result.facebook_time_source = "permalink_meta";
+                        console.log(`Source: ${result.facebook_time_source}`);
+                        console.log(`Raw: ${result.facebook_post_date_text}`);
+                        console.log(`ISO: ${result.facebook_post_datetime}`);
+                        console.log("========================================");
+                        return result;
+                    }
+                }
+            } catch (e) {
+                // Ignore temp page errors
+            }
+        }
+
+        // METHOD 3: Hover Tooltip
+        let tooltipText = null;
+
+        const attemptHover = async (el) => {
+            if (await el.isVisible().catch(() => false)) {
+                await el.scrollIntoViewIfNeeded().catch(() => {});
+                await page.waitForTimeout(300).catch(() => {});
+                await el.evaluate(node => {
+                    node.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                    node.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+                }).catch(()=>{});
+                await el.hover({ force: true, timeout: 2000 }).catch(() => {});
+                try {
+                    await page.waitForSelector('[role="tooltip"]', { timeout: 2500 });
+                    const tooltip = page.locator('[role="tooltip"]').last();
+                    if (await tooltip.count().catch(() => 0) > 0 && await tooltip.isVisible().catch(() => false)) {
+                        return await tooltip.innerText().catch(() => null);
+                    }
+                } catch (e) {
+                    const genericTooltip = page.locator('.uiTooltipX, [data-tooltip-content]').last();
+                    if (await genericTooltip.count().catch(() => 0) > 0) {
+                        let txt = await genericTooltip.innerText().catch(() => null);
+                        if (!txt) txt = await genericTooltip.getAttribute('data-tooltip-content').catch(() => null);
+                        return txt;
+                    }
+                }
+            }
+            return null;
+        };
+
+        if (hasTsEl) {
+            tooltipText = await attemptHover(tsEl);
+            await page.mouse.move(0, 0).catch(() => {});
+        } else {
+            // SCRAMBLED DOM FALLBACK: Hover likely candidates until we find the tooltip
+            console.log("data-scraper-timestamp missing. Scanning for timestamp anchor...");
+            const candidateIndices = await feedCard.evaluate((card) => {
+                const anchors = Array.from(card.querySelectorAll('a[href]'));
+                return anchors.map((a, i) => {
+                    // Skip media anchors
+                    if (a.querySelector('img, svg, video, [role="img"]')) return -1;
+                    const href = a.getAttribute('href') || "";
+                    // Skip obvious non-timestamp links
+                    if (href.includes('/user/') || href.includes('profile.php') || href.includes('hashtag/') || href.includes('wa.me')) return -1;
+                    return i;
+                }).filter(i => i !== -1);
+            }).catch(() => []);
+
+            const allAnchors = feedCard.locator('a[href]');
+            for (const idx of candidateIndices) {
+                const el = allAnchors.nth(idx);
+                tooltipText = await attemptHover(el);
+                if (tooltipText && fullDatePattern.test(tooltipText)) {
+                    console.log(`Found tooltip on candidate index ${idx}!`);
+                    break;
+                }
+                tooltipText = null;
+            }
+            await page.mouse.move(0, 0).catch(() => {});
+        }
+
+        if (tooltipText && fullDatePattern.test(tooltipText)) {
+            if (parseAbsolute(tooltipText, 'tooltip')) {
+                console.log(`Source: ${result.facebook_time_source}`);
+                console.log(`Raw: ${result.facebook_post_date_text}`);
+                console.log(`ISO: ${result.facebook_post_datetime}`);
+                console.log("========================================");
+                return result;
+            }
+        }
+
+        // METHOD 4: Relative Parser
+        let relativeText = "";
+        if (hasTsEl) {
+            relativeText = await feedCard.evaluate((card) => {
+                const el = card.querySelector('a[data-scraper-timestamp="true"]');
+                return el ? (el.innerText || el.getAttribute('aria-label') || "") : "";
+            }).catch(() => "");
+        }
+
+            
+            relativeText = relativeText.trim();
+            if (relativeText && /^(just now|today|yesterday|\d+\s*(m|min|mins|h|hr|hrs|d|day|days|w|wk|wks)|[a-z]+ \d{1,2}(,\s*\d{4})?)$/i.test(relativeText)) {
+                const now = new Date();
+                let parseAttemptDate = null;
+                const txt = relativeText.toLowerCase();
+                
+                if (txt.includes('just now') || txt.includes('today')) {
+                    parseAttemptDate = now;
+                } else if (/(\d+)\s*m/.test(txt)) {
+                    const mins = parseInt(txt.match(/(\d+)\s*m/)[1], 10);
+                    parseAttemptDate = new Date(now.getTime() - mins * 60000);
+                } else if (/(\d+)\s*h/.test(txt)) {
+                    const hrs = parseInt(txt.match(/(\d+)\s*h/)[1], 10);
+                    parseAttemptDate = new Date(now.getTime() - hrs * 3600000);
+                } else if (/(\d+)\s*d/.test(txt)) {
+                    const days = parseInt(txt.match(/(\d+)\s*d/)[1], 10);
+                    parseAttemptDate = new Date(now.getTime() - days * 86400000);
+                } else if (txt.includes('yesterday')) {
+                    parseAttemptDate = new Date(now.getTime() - 86400000);
+                }
+                
+                if (parseAttemptDate && !isNaN(parseAttemptDate.getTime())) {
+                    result.facebook_post_datetime = parseAttemptDate.toISOString();
+                    result.facebook_post_date_text = relativeText;
+                    result.facebook_time_source = "relative_parser";
+                    console.log(`Source: ${result.facebook_time_source}`);
+                    console.log(`Raw: ${result.facebook_post_date_text}`);
+                    console.log(`ISO: ${result.facebook_post_datetime}`);
+                    console.log("========================================");
+                    return result;
+                }
+            }
+
+        if (!result.facebook_post_datetime) {
+            console.log("No Facebook timestamp found.\nFalling back to scraper timestamp.");
+
+            console.log("\n========== FACEBOOK TIMESTAMP DEBUG ==========");
+            console.log(`data-scraper-timestamp="true" was present: ${hasTsEl}`);
+            if (!hasTsEl) {
+                console.log("Reason: extractMetadata() failed to add data-scraper-timestamp to any element.");
+            }
+
+            const debugCandidates = await feedCard.evaluate((card) => {
+                return Array.from(card.querySelectorAll('a[href]'))
+                    .filter(a => {
+                        const href = a.getAttribute('href') || "";
+                        return !href.includes('/user/') && !href.includes('profile.php') && !href.includes('comment_id') && !href.includes('p.php');
+                    })
+                    .map(a => {
+                        let ariaLabel = a.getAttribute("aria-label") || "";
+                        if (!ariaLabel) {
+                            const childAria = a.querySelector('[aria-label]');
+                            if (childAria) ariaLabel = childAria.getAttribute("aria-label") || "";
+                        }
+                        return {
+                            tag: a.tagName,
+                            href: a.getAttribute('href') || "",
+                            innerText: (a.innerText || "").replace(/\n/g, '\\n').trim(),
+                            ariaLabel: ariaLabel,
+                            title: a.getAttribute('title') || "",
+                            outerHTML: a.outerHTML.substring(0, 150) + (a.outerHTML.length > 150 ? '...' : '')
+                        };
+                    });
+            }).catch(() => []);
+
+            console.log(`Timestamp candidates found: ${debugCandidates.length}\n`);
+            debugCandidates.forEach((c, i) => {
+                console.log(`Candidate #${i + 1}`);
+                console.log(`tag: ${c.tag}`);
+                console.log(`href: ${c.href}`);
+                console.log(`innerText: ${c.innerText}`);
+                console.log(`aria-label: ${c.ariaLabel}`);
+                console.log(`title: ${c.title}`);
+                console.log(`outerHTML: ${c.outerHTML}\n`);
+            });
+            console.log("=============================================");
+
+            try {
+                const fs = require('fs');
+                const html = await feedCard.innerHTML().catch(() => "");
+                fs.writeFileSync('debug_timestamp_failed.html', html);
+                console.log("Saved feed card HTML to debug_timestamp_failed.html");
+            } catch (fsErr) {
+                console.log("Failed to save debug HTML:", fsErr.message);
+            }
+        }
+        console.log("========================================");
+    } catch (e) {
+        console.log(`Exception in timestamp extraction: ${e.message}`);
+        console.log("========================================");
+    }
+    
+    return result;
+}
 
 function getVideoSignature(urlStr) {
     try {
@@ -744,6 +1070,13 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     
                     let urls = anchors.map(a => {
                         let href = a.getAttribute("href") || "";
+                        let rawHref = href;
+                        let ariaLabel = a.getAttribute("aria-label") || "";
+                        if (!ariaLabel) {
+                            const childAria = a.querySelector('[aria-label]');
+                            if (childAria) ariaLabel = childAria.getAttribute("aria-label") || "";
+                        }
+                        
                         // Normalize relative URLs to absolute
                         if (href.startsWith('/')) {
                             href = 'https://www.facebook.com' + href;
@@ -763,7 +1096,10 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                         
                         return { 
                             href, 
-                            text: (a.innerText || "").trim(),
+                            rawHref,
+                            element: a,
+                            ariaLabel,
+                            text: (a.innerText || "").replace(/\\n/g, '').trim(),
                             isProfile: href.includes('/user/') || href.includes('profile.php') || href.includes('comment_id') || href.includes('p.php')
                         };
                     }).filter(u => !u.isProfile);
@@ -783,16 +1119,47 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                         if (match) {
                             bestUrl = match.href;
                             bestType = pattern.type;
-                            
-                            // Attempt to get timestamp
-                            if (match.text && match.text.length > 0 && match.text.length < 20) {
-                                bestTimestamp = match.text;
-                            } else {
-                                // Fallback timestamp extraction
-                                const tsMatch = urls.find(u => u.text && (u.text.includes('h') || u.text.includes('m') || u.text.includes('d') || u.text.includes('Just') || u.text.includes('Today')));
-                                if (tsMatch) bestTimestamp = tsMatch.text;
+
+                            // Strict relative-time pattern: must be SHORT and match cleanly end-to-end,
+                            // not just "contains a digit somewhere in a huge blob".
+                            const isCleanRelativeTs = (txt) => {
+                                if (!txt) return false;
+                                const t = txt.trim();
+                                if (t.length === 0 || t.length > 20) return false; // real labels are short
+                                return /^(just now|today|yesterday|\d+\s*(m|min|mins|h|hr|hrs|d|day|days|w|wk|wks)|[a-z]+ \d{1,2}(,\s*\d{4})?)$/i.test(t);
+                            };
+
+                            // Absolute full-date pattern for aria-label candidates (e.g. "6 July 2026 at 9:05 AM")
+                            const isFullDateAria = (txt) => !!txt && /\d{1,2}\s+[a-z]+\s+\d{4}.*\d{1,2}:\d{2}/i.test(txt);
+
+                            // 1. Prefer a candidate whose aria-label is already a full absolute date —
+                            //    this skips hover entirely later and is immune to text-scrambling,
+                            //    since aria-label is a separate attribute, not scrambled decoy DOM text.
+                            let tsMatch = urls.find(u => isFullDateAria(u.ariaLabel));
+
+                            // 2. Otherwise, prefer a candidate whose VISIBLE text is a clean short
+                            //    relative label ("43 m", "2 hrs", "Yesterday") — reject anything long
+                            //    or garbled, since that's almost certainly scrambled decoy text mixed in.
+                            if (!tsMatch) {
+                                tsMatch = urls.find(u => isCleanRelativeTs(u.text) || isCleanRelativeTs(u.ariaLabel));
                             }
-                            break; // Stop at highest priority
+
+                            if (tsMatch) {
+                                bestTimestamp = (isCleanRelativeTs(tsMatch.text) ? tsMatch.text : tsMatch.ariaLabel) || "Today";
+                                tsMatch.element.setAttribute('data-scraper-timestamp', 'true');
+                            } else {
+                                // 3. Fallback: Facebook scrambled the text so isCleanRelativeTs failed.
+                                // Find an anchor that links to the permalink but is NOT a large media wrapper (contains img/video).
+                                tsMatch = urls.find(u => pattern.regex.test(u.href) && !u.element.querySelector('img, video, [role="img"]'));
+                                
+                                if (tsMatch) {
+                                    bestTimestamp = "Today"; // Still unknown until hover/meta extracts it
+                                    tsMatch.element.setAttribute('data-scraper-timestamp', 'true');
+                                } else {
+                                    bestTimestamp = "Today";
+                                }
+                            }
+                            break; // Stop at highest priority pattern match
                         }
                     }
 
@@ -999,6 +1366,10 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             } else {
                 console.log("No video detected");
             }
+            
+            // Hover logic moved down below permalink fallbacks
+            // -------------------------------------
+
 
             // Completely skip Facebook feed sorting widgets (Most Relevant, Most recent, New activity, Suggested for you)
             const checkAuthor = (data.author || "").toLowerCase().trim();
@@ -1135,6 +1506,8 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 continue;
             }
 
+
+
             // Scrape timestamp generation moved to right before save
             const timestamp = data.permalinkObj ? (data.permalinkObj.timestamp || "Unknown") : "Unknown";
             let rawPermalink = data.permalinkObj ? data.permalinkObj.url : null;
@@ -1170,6 +1543,12 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             let permalink = cleanPermalink(rawPermalink);
             let facebookPostId = normalizeFacebookPostId(permalink);
             let temporaryId = null;
+
+            // --- EXTRACT FACEBOOK TIMESTAMP ---
+            const tsData = await extractFacebookTimestamp(feedUnit, targetPage, permalink);
+            let facebook_post_datetime = tsData.facebook_post_datetime;
+            let facebook_post_date_text = tsData.facebook_post_date_text;
+            let facebook_time_source = tsData.facebook_time_source;
 
             let isOldPost = !isTodayPost(timestamp);
             if (isOldPost) {
@@ -1583,10 +1962,10 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             }
 
             // --- NEW SCRAPE TIMESTAMP VALIDATION ---
-            let facebookPostDatetime = null;
-            let facebookPostTimeText = null;
+            let facebookPostDatetime = facebook_post_datetime;
+            let facebookPostTimeText = facebook_post_date_text;
 
-            while (!facebookPostTimeText) {
+            if (!facebookPostDatetime || !facebookPostTimeText) {
                 const scrapedAt = new Date();
                 facebookPostDatetime = scrapedAt.toISOString();
                 
@@ -1602,10 +1981,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 hours = hours ? hours : 12;
                 
                 const candidate = `${day} ${month} ${year} • ${hours}:${minutes} ${ampm}`;
-                
-                if (candidate && !candidate.includes("undefined") && !candidate.includes("NaN")) {
-                    facebookPostTimeText = candidate;
-                }
+                facebookPostTimeText = candidate;
             }
 
             console.log("\n=========================");
@@ -1626,6 +2002,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 body: data.bodyText,
                 facebook_post_datetime: facebookPostDatetime,
                 facebook_post_time_text: facebookPostTimeText,
+                facebook_time_source: facebook_time_source,
                 post_time_text: facebookPostTimeText,
                 post_created_at: facebookPostDatetime,
                 post_date: facebookPostTimeText,

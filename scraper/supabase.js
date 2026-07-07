@@ -254,6 +254,7 @@ async function upsertPostToSupabase(posts) {
                             post_time_text: post.post_time_text,
                             facebook_post_datetime: post.facebook_post_datetime,
                             facebook_post_time_text: post.facebook_post_time_text,
+                            facebook_time_source: post.facebook_time_source,
                             scraped_at: post.scraped_at,
                             facebook_video_url: post.facebook_video_url
                         };
@@ -267,6 +268,7 @@ async function upsertPostToSupabase(posts) {
                             if (updateRes.error.message.includes("facebook_video_url")) delete updatePayload.facebook_video_url;
                             if (updateRes.error.message.includes("facebook_post_datetime")) delete updatePayload.facebook_post_datetime;
                             if (updateRes.error.message.includes("facebook_post_time_text")) delete updatePayload.facebook_post_time_text;
+                            if (updateRes.error.message.includes("facebook_time_source")) delete updatePayload.facebook_time_source;
                             if (updateRes.error.message.includes("images")) {
                                 console.warn(`\n⚠️  WARNING: The 'images' column is missing in your Supabase database!`);
                                 delete updatePayload.images;
@@ -339,7 +341,8 @@ async function upsertPostToSupabase(posts) {
             facebook_post_id: post.facebook_post_id,
             facebook_video_url: post.facebook_video_url,
             facebook_post_datetime: post.facebook_post_datetime,
-            facebook_post_time_text: post.facebook_post_time_text
+            facebook_post_time_text: post.facebook_post_time_text,
+            facebook_time_source: post.facebook_time_source
         }));
 
         let { data, error } = await supabase
@@ -358,6 +361,7 @@ async function upsertPostToSupabase(posts) {
                 console.warn(`\n⚠️  WARNING: The 'facebook_post_datetime' column is missing in your Supabase database!`);
                 console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_post_datetime TIMESTAMPTZ;`);
                 console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_post_time_text TEXT;`);
+                console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_time_source TEXT;`);
             }
             if (error.message.includes("images")) {
                 console.warn(`\n⚠️  CRITICAL WARNING: The 'images' column is missing in your Supabase database!`);
@@ -371,6 +375,7 @@ async function upsertPostToSupabase(posts) {
                 if (error.message.includes("facebook_post_datetime")) {
                     delete copy.facebook_post_datetime;
                     delete copy.facebook_post_time_text;
+                    delete copy.facebook_time_source;
                 }
                 if (error.message.includes("images")) delete copy.images;
                 return copy;

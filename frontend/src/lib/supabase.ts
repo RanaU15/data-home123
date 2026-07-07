@@ -93,11 +93,39 @@ export function formatDate(dateStr?: string): string {
 }
 
 export function getDisplayDate(post: Post): string {
+  if (post.facebook_post_datetime) {
+    try {
+      const d = new Date(post.facebook_post_datetime);
+      if (!isNaN(d.getTime())) {
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const day = d.getDate();
+        const month = months[d.getMonth()];
+        const year = d.getFullYear();
+        let hours = d.getHours();
+        const minutes = d.getMinutes().toString().padStart(2, '0');
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12;
+        hours = hours ? hours : 12;
+        return `${day} ${month} ${year} • ${hours}:${minutes} ${ampm}`;
+      }
+    } catch(e) {}
+  }
+  
   if (post.facebook_post_time_text && post.facebook_post_time_text.trim() !== "") {
     const text = post.facebook_post_time_text.trim();
-    if (!/^(Just now|Today|Yesterday|.*ago.*|.*min.*|.*hr.*|.*hour.*|.*day.*|\d+\s*[mhdw]|Unknown|Invalid Date|null|undefined)$/i.test(text)) {
+    if (!/^(Unknown|Invalid Date|null|undefined)$/i.test(text)) {
       return text;
     }
+  }
+  
+  if (post.scraped_at) {
+    try {
+      const d = new Date(post.scraped_at);
+      if (!isNaN(d.getTime())) {
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()} • ${d.getHours() % 12 || 12}:${d.getMinutes().toString().padStart(2, '0')} ${d.getHours() >= 12 ? 'PM' : 'AM'}`;
+      }
+    } catch(e) {}
   }
   
   return 'Time unavailable';
