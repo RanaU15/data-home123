@@ -96,6 +96,22 @@ async function ensureLoggedIn() {
     console.log("Navigating to Facebook to check session...");
     await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
 
+    const cookiesAfterFacebook = await context.cookies();
+
+    console.log("==================================");
+    console.log("Cookies AFTER visiting Facebook");
+
+    console.log(
+        cookiesAfterFacebook.map(c => ({
+            name: c.name,
+            domain: c.domain,
+            valueLength: c.value.length,
+            expires: c.expires
+        }))
+    );
+
+    console.log("==================================");
+
     console.log("==================================");
     console.log("Current URL:", page.url());
     console.log("Current Title:", await page.title());
