@@ -147,6 +147,21 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
           </div>
         </div>
 
+        <!-- Requirement Filter -->
+        <div class="mb-5">
+          <label class="block text-sm font-semibold text-slate-700 mb-3">Requirement</label>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="flat" class="filter-requirement h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">Looking for Flat / Rent</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="flatmate" class="filter-requirement h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">Looking for Flatmate</span>
+            </label>
+          </div>
+        </div>
+
         <button 
           type="button" 
           id="reset-filters-btn-sidebar" 
@@ -295,6 +310,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       
       const typeCheckboxes = Array.from(document.querySelectorAll(".filter-type")) as HTMLInputElement[];
       const tenantCheckboxes = Array.from(document.querySelectorAll(".filter-tenant")) as HTMLInputElement[];
+      const requirementCheckboxes = Array.from(document.querySelectorAll(".filter-requirement")) as HTMLInputElement[];
       
       const resultsContainer = document.getElementById("results-container");
       const searchSkeleton = document.getElementById("search-skeleton");
@@ -374,6 +390,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
         
         const selectedTypes = typeCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
         const selectedTenants = tenantCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
+        const selectedRequirements = requirementCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
 
         // Show skeleton loader briefly to indicate background filtering
         resultsContainer.classList.add("hidden");
@@ -432,7 +449,17 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
               });
             }
 
-            if (matchesLocation && matchesBudget && matchesType && matchesTenant) {
+            // --- 5. Requirement Filter ---
+            let matchesRequirement = true;
+            if (selectedRequirements.length > 0) {
+              matchesRequirement = selectedRequirements.some(req => {
+                if (req === 'flat') return body.includes('looking for flat') || body.includes('looking for flate') || body.includes('need a flat') || body.includes('need flat') || body.includes('available for rent') || body.includes('rent') || body.includes('to let') || body.includes('flat available') || body.includes('flate available');
+                if (req === 'flatmate') return body.includes('looking for flatmate') || body.includes('looking for flatemate') || body.includes('looking for flatement') || body.includes('looking for flatemants') || body.includes('need flatmate') || body.includes('flatmate required') || body.includes('roommate') || body.includes('room partner') || body.includes('pg') || body.includes('sharing');
+                return false;
+              });
+            }
+
+            if (matchesLocation && matchesBudget && matchesType && matchesTenant && matchesRequirement) {
               matchingPosts.push(wrapper);
             }
           });
@@ -458,6 +485,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       
       typeCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
       tenantCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
+      requirementCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
 
       function goToPage(newPage: number) {
         currentPage = newPage;
@@ -475,6 +503,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
         if (inputBudget) inputBudget.value = "";
         typeCheckboxes.forEach(cb => cb.checked = false);
         tenantCheckboxes.forEach(cb => cb.checked = false);
+        requirementCheckboxes.forEach(cb => cb.checked = false);
         filterPosts();
       }
 

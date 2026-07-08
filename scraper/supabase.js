@@ -239,7 +239,7 @@ async function upsertPostToSupabase(posts) {
                             share_count: post.share_count,
                             reaction_breakdown: post.reaction_breakdown,
                             comments_disabled: post.comments_disabled,
-                            images: post.images,
+                            image_urls: post.image_urls,
                             image_count: post.image_count,
                             video_urls: post.video_urls,
                             video_thumbnail: post.video_thumbnail,
@@ -250,11 +250,7 @@ async function upsertPostToSupabase(posts) {
                             author_avatar: post.author_avatar,
                             author_profile_url: post.author_profile_url,
                             post_url: post.post_url,
-                            post_created_at: post.post_created_at,
-                            post_time_text: post.post_time_text,
-                            facebook_post_datetime: post.facebook_post_datetime,
-                            facebook_post_time_text: post.facebook_post_time_text,
-                            facebook_time_source: post.facebook_time_source,
+                            facebook_time: post.facebook_time,
                             scraped_at: post.scraped_at,
                             facebook_video_url: post.facebook_video_url
                         };
@@ -266,12 +262,10 @@ async function upsertPostToSupabase(posts) {
                             
                         if (updateRes.error && (updateRes.error.message.includes("schema cache") || updateRes.error.message.includes("Could not find the"))) {
                             if (updateRes.error.message.includes("facebook_video_url")) delete updatePayload.facebook_video_url;
-                            if (updateRes.error.message.includes("facebook_post_datetime")) delete updatePayload.facebook_post_datetime;
-                            if (updateRes.error.message.includes("facebook_post_time_text")) delete updatePayload.facebook_post_time_text;
-                            if (updateRes.error.message.includes("facebook_time_source")) delete updatePayload.facebook_time_source;
-                            if (updateRes.error.message.includes("images")) {
-                                console.warn(`\n⚠️  WARNING: The 'images' column is missing in your Supabase database!`);
-                                delete updatePayload.images;
+                            if (updateRes.error.message.includes("facebook_time")) delete updatePayload.facebook_time;
+                            if (updateRes.error.message.includes("image_urls")) {
+                                console.warn(`\n⚠️  WARNING: The 'image_urls' column is missing in your Supabase database!`);
+                                delete updatePayload.image_urls;
                             }
                             
                             updateRes = await supabase
@@ -314,9 +308,6 @@ async function upsertPostToSupabase(posts) {
             author_profile_url: post.author_profile_url,
             author_avatar: post.author_avatar,
             body: post.body,
-            post_date: post.post_date,
-            post_created_at: post.post_created_at,
-            post_time_text: post.post_time_text,
             permalink: post.permalink,
             post_url: post.post_url,
             likes: post.likes,
@@ -327,7 +318,7 @@ async function upsertPostToSupabase(posts) {
             share_count: post.share_count,
             reaction_breakdown: post.reaction_breakdown,
             comments_disabled: post.comments_disabled,
-            images: post.images,
+            image_urls: post.image_urls,
             image_count: post.image_count,
             video_urls: post.video_urls,
             video_thumbnail: post.video_thumbnail,
@@ -340,9 +331,7 @@ async function upsertPostToSupabase(posts) {
             needs_permalink: post.needs_permalink,
             facebook_post_id: post.facebook_post_id,
             facebook_video_url: post.facebook_video_url,
-            facebook_post_datetime: post.facebook_post_datetime,
-            facebook_post_time_text: post.facebook_post_time_text,
-            facebook_time_source: post.facebook_time_source
+            facebook_time: post.facebook_time
         }));
 
         let { data, error } = await supabase
@@ -357,14 +346,12 @@ async function upsertPostToSupabase(posts) {
                 console.warn(`\n⚠️  WARNING: The 'facebook_video_url' column is missing in your Supabase database!`);
                 console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_video_url TEXT;`);
             }
-            if (error.message.includes("facebook_post_datetime")) {
-                console.warn(`\n⚠️  WARNING: The 'facebook_post_datetime' column is missing in your Supabase database!`);
-                console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_post_datetime TIMESTAMPTZ;`);
-                console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_post_time_text TEXT;`);
-                console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_time_source TEXT;`);
+            if (error.message.includes("facebook_time")) {
+                console.warn(`\n⚠️  WARNING: The 'facebook_time' column is missing in your Supabase database!`);
+                console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_time TEXT;`);
             }
-            if (error.message.includes("images")) {
-                console.warn(`\n⚠️  CRITICAL WARNING: The 'images' column is missing in your Supabase database!`);
+            if (error.message.includes("image_urls")) {
+                console.warn(`\n⚠️  CRITICAL WARNING: The 'image_urls' column is missing in your Supabase database!`);
                 console.warn(`⚠️  Images will NOT be saved until you add this column!`);
             }
             console.warn(`⚠️  Retrying upload without the missing columns to prevent crashing...\n`);
@@ -372,12 +359,10 @@ async function upsertPostToSupabase(posts) {
             const fallbackPosts = cleanPosts.map(p => {
                 const copy = { ...p };
                 if (error.message.includes("facebook_video_url")) delete copy.facebook_video_url;
-                if (error.message.includes("facebook_post_datetime")) {
-                    delete copy.facebook_post_datetime;
-                    delete copy.facebook_post_time_text;
-                    delete copy.facebook_time_source;
+                if (error.message.includes("facebook_time")) {
+                    delete copy.facebook_time;
                 }
-                if (error.message.includes("images")) delete copy.images;
+                if (error.message.includes("image_urls")) delete copy.image_urls;
                 return copy;
             });
             

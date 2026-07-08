@@ -9,10 +9,7 @@ export interface Post {
   author_profile_url?: string;
   author_avatar?: string;
   body?: string;
-  post_date?: string;
-  post_time_text?: string;
-  post_created_at?: string;
-  date?: string;
+  facebook_time?: string;
   permalink?: string;
   post_url?: string;
   likes?: number;
@@ -22,6 +19,7 @@ export interface Post {
   comment_count?: number;
   share_count?: number;
   screenshot?: string;
+  images?: any;
   image_urls?: string[];
   video_urls?: string[];
   video_thumbnail?: string;
@@ -34,8 +32,6 @@ export interface Post {
   needs_permalink?: boolean;
   facebook_post_id?: string;
   facebook_video_url?: string;
-  facebook_post_datetime?: string;
-  facebook_post_time_text?: string;
 }
 
 const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL || 'https://gimjsxpwteluwiopcrqq.supabase.co';
@@ -94,44 +90,11 @@ export function formatDate(dateStr?: string): string {
 }
 
 export function getDisplayDate(post: Post): string {
-  const formatIST = (dateStr: string) => {
-    try {
-      const d = new Date(dateStr);
-      if (!isNaN(d.getTime())) {
-        const formatter = new Intl.DateTimeFormat('en-US', {
-          timeZone: 'Asia/Kolkata',
-          day: 'numeric',
-          month: 'short',
-          year: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true
-        });
-        const parts = formatter.formatToParts(d);
-        const p: Record<string, string> = {};
-        for (const part of parts) p[part.type] = part.value;
-        return `${p.day} ${p.month} ${p.year} • ${p.hour}:${p.minute} ${p.dayPeriod}`;
-      }
-    } catch(e) {}
-    return null;
-  };
-
-  if (post.facebook_post_datetime) {
-    const formatted = formatIST(post.facebook_post_datetime);
-    if (formatted) return formatted;
-  }
-  
-  if (post.facebook_post_time_text && post.facebook_post_time_text.trim() !== "") {
-    const text = post.facebook_post_time_text.trim();
-    if (!/^(Unknown|Invalid Date|null|undefined)$/i.test(text)) {
+  if (post.facebook_time && typeof post.facebook_time === 'string') {
+    const text = post.facebook_time.trim();
+    if (!/^(Unknown|Invalid Date|null|undefined|N\/A)$/i.test(text)) {
       return text;
     }
   }
-  
-  if (post.scraped_at) {
-    const formatted = formatIST(post.scraped_at);
-    if (formatted) return formatted;
-  }
-  
-  return 'Time unavailable';
+  return '';
 }

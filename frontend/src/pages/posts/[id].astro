@@ -51,8 +51,14 @@ let body = '';
 let imageCount = 0;
 
 if (post) {
-  // Never use screenshots, use direct Facebook URLs
-  images = (post.images || []).filter((img: string) => !img.includes('supabase.co'));
+  images = post.image_urls || [];
+  if (images.length === 0 && post.images) {
+    let oldImages = Array.isArray(post.images) ? post.images : [];
+    if (typeof post.images === 'string') {
+      try { oldImages = JSON.parse(post.images); } catch(e) {}
+    }
+    images = oldImages.filter((img: string) => !img.includes('supabase.co'));
+  }
   author = post.author || 'Unknown Author';
   groupName = post.group_name || post.group_id || 'Facebook Group';
   postDate = getDisplayDate(post);
@@ -105,66 +111,89 @@ if (post) {
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
       <!-- Left Column: Image Gallery -->
       <div class="lg:col-span-7 space-y-4">
-        {post?.has_video && post?.video_urls && post.video_urls.length > 0 ? (
-          <div class="space-y-4">
-            {Array.from(new Set(post.video_urls)).map((vUrl, vIdx) => {
-              const isPlayable = vUrl.includes('.mp4') || vUrl.includes('.webm') || vUrl.includes('fbcdn.net/v/t') || vUrl.includes('supabase');
-              return isPlayable ? (
-                <div class="overflow-hidden rounded-2xl bg-black border border-slate-200 shadow-sm aspect-video relative group flex items-center justify-center">
-                  <video controls playsinline preload="metadata" poster={post.video_thumbnail || ''} class="w-full h-full object-contain" style="max-height: 100%; border-radius: 12px;">
-                    <source src={vUrl} />
-                    Your browser does not support the video tag.
-                  </video>
-                </div>
-              ) : (
-                <div class="overflow-hidden rounded-2xl bg-slate-100 aspect-video relative group border border-slate-200 flex items-center justify-center">
-                  {(post.video_thumbnail || (images.length > 0 ? images[0] : null)) ? (
-                    <img src={post.video_thumbnail || images[0]} referrerpolicy="no-referrer" alt="Video Thumbnail" class="absolute inset-0 w-full h-full object-cover opacity-80" />
-                  ) : (
-                    <div class="absolute inset-0 flex items-center justify-center bg-slate-100 text-slate-400">
-                      <span class="font-medium text-lg uppercase tracking-wider text-slate-300">No Image</span>
-                    </div>
-                  )}
-                  <a href={vUrl.startsWith('http') ? vUrl : permalink} target="_blank" rel="noopener noreferrer" class="relative z-10 flex items-center gap-2 bg-black/60 hover:bg-black/80 text-white px-5 py-3 rounded-full font-semibold transition-colors backdrop-blur-sm shadow-xl">
-                    <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                    Watch on Facebook
-                  </a>
-                </div>
-              );
-            })}
-          </div>
-        ) : post?.facebook_video_url ? (
+        {post?.has_video || post?.facebook_video_url ? (
           <div class="overflow-hidden rounded-2xl bg-slate-100 aspect-video relative group border border-slate-200 flex items-center justify-center">
             {(post.video_thumbnail || (images.length > 0 ? images[0] : null)) ? (
               <img src={post.video_thumbnail || images[0]} referrerpolicy="no-referrer" alt="Video Thumbnail" class="absolute inset-0 w-full h-full object-cover opacity-80" />
             ) : (
               <div class="absolute inset-0 flex items-center justify-center bg-slate-100 text-slate-400">
-                <span class="font-medium text-lg uppercase tracking-wider text-slate-300">No Image</span>
+                <span class="font-medium text-lg uppercase tracking-wider text-slate-300">No Thumbnail</span>
               </div>
             )}
-            <a href={post.facebook_video_url} target="_blank" rel="noopener noreferrer" class="relative z-10 flex items-center gap-2 bg-black/60 hover:bg-black/80 text-white px-5 py-3 rounded-full font-semibold transition-colors backdrop-blur-sm shadow-xl">
-              <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-              ▶ Watch Video on Facebook
+            <a href={post.facebook_video_url || permalink} target="_blank" rel="noopener noreferrer" class="relative z-10 flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3.5 rounded-full font-bold transition-colors shadow-lg shadow-blue-600/30">
+              <svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+              Watch Video on Facebook
             </a>
           </div>
         ) : (
-          <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm aspect-video relative flex items-center justify-center bg-slate-50">
+          <div class="rounded-2xl border border-slate-200 bg-white shadow-sm flex flex-col overflow-hidden">
             {images.length > 0 ? (
-              <div class="flex flex-col h-full w-full overflow-y-auto bg-slate-50 p-6 items-start justify-start gap-4">
-                <h3 class="text-sm font-semibold uppercase tracking-wider text-slate-500 sticky top-0 bg-slate-50 w-full pb-2 border-b border-slate-200">
-                  Extracted Image URLs ({imageCount})
-                </h3>
-                <div class="flex flex-col gap-3 w-full">
-                  {images.map((url: string, idx: number) => (
-                    <a href={url} target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:blue-800 hover:underline text-sm break-all w-full bg-white p-3 rounded-lg border border-slate-200 shadow-sm transition-all hover:shadow-md flex gap-3">
-                      <span class="font-bold text-slate-400 shrink-0">[{idx + 1}]</span>
-                      <span class="truncate">{url}</span>
-                    </a>
-                  ))}
+              <>
+                <div class="relative w-full aspect-[4/3] sm:aspect-video bg-slate-50 flex items-center justify-center group select-none overflow-hidden" id="main-image-container">
+                  <!-- Skeleton loader -->
+                  <div id="image-loader" class="absolute inset-0 flex items-center justify-center bg-slate-50 z-10">
+                     <svg class="animate-spin h-8 w-8 text-slate-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  </div>
+
+                  <img 
+                    id="main-gallery-image"
+                    src={images[0]} 
+                    alt={`${author} post image 1`} 
+                    class="w-full h-full object-contain cursor-zoom-in transition-opacity duration-300 opacity-0 relative z-20"
+                    onload="this.classList.remove('opacity-0'); document.getElementById('image-loader').style.display='none';"
+                    referrerpolicy="no-referrer"
+                    data-index="0"
+                  />
+
+                  <!-- Image Counter -->
+                  <div class="absolute top-4 left-4 z-30 bg-black/60 backdrop-blur-md text-white text-xs font-semibold px-3 py-1.5 rounded-full shadow-sm pointer-events-none">
+                    <span id="gallery-counter">Image 1 of {imageCount}</span>
+                  </div>
+                  
+                  <!-- Fullscreen button -->
+                  <button type="button" id="open-lightbox-btn" class="absolute top-4 right-4 z-30 bg-black/60 hover:bg-black/80 backdrop-blur-md text-white p-2 rounded-full transition-colors shadow-sm" title="Fullscreen">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                  </button>
+
+                  <!-- Navigation Arrows -->
+                  {imageCount > 1 && (
+                    <>
+                      <button type="button" id="prev-image-btn" class="absolute left-3 top-1/2 -translate-y-1/2 z-30 bg-white/90 hover:bg-white text-slate-800 p-2 rounded-full shadow-md transition-all opacity-0 group-hover:opacity-100 focus:opacity-100" title="Previous Image">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                      </button>
+                      <button type="button" id="next-image-btn" class="absolute right-3 top-1/2 -translate-y-1/2 z-30 bg-white/90 hover:bg-white text-slate-800 p-2 rounded-full shadow-md transition-all opacity-0 group-hover:opacity-100 focus:opacity-100" title="Next Image">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                      </button>
+                    </>
+                  )}
                 </div>
-              </div>
+                
+                {imageCount > 1 && (
+                  <div class="w-full bg-white p-4 border-t border-slate-100">
+                    <div class="flex overflow-x-auto gap-3 pb-2 scrollbar-hide snap-x" id="thumbnail-container">
+                      {images.map((url: string, idx: number) => (
+                        <button 
+                          type="button" 
+                          class={`gallery-thumbnail flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden snap-center focus:outline-none transition-all ${idx === 0 ? 'ring-2 ring-blue-600 border-2 border-transparent opacity-100' : 'opacity-60 hover:opacity-100 border-2 border-transparent'}`}
+                          data-image={url}
+                          data-index={idx}
+                          aria-label={`View image ${idx + 1}`}
+                        >
+                          <img 
+                            src={url} 
+                            alt={`Thumbnail ${idx + 1}`} 
+                            class="w-full h-full object-cover" 
+                            referrerpolicy="no-referrer"
+                            loading="lazy"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
-              <div class="flex flex-col items-center justify-center text-slate-400">
+              <div class="flex flex-col items-center justify-center text-slate-400 aspect-video bg-slate-50">
                 <svg class="w-20 h-20 mb-4 opacity-20" fill="currentColor" viewBox="0 0 24 24"><path d="M4 4h16v16H4z" opacity="0.2"/><path d="M4 2h16c1.1 0 2 .9 2 2v16c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2zm0 18h16V4H4v16zm11-11a2 2 0 110-4 2 2 0 010 4zM5.5 17h13l-4-5-3.5 4.5-2.5-3L5.5 17z"/></svg>
                 <span class="font-medium text-lg uppercase tracking-wider text-slate-300">No Image</span>
               </div>
@@ -280,27 +309,158 @@ if (post) {
     </div>
   )}
 
+  <!-- Lightbox -->
+  <div id="lightbox" class="fixed inset-0 z-[100] bg-black/95 hidden flex-col items-center justify-center backdrop-blur-sm touch-none">
+    <div class="absolute top-4 right-4 z-10 flex gap-4">
+      <div id="lightbox-counter" class="text-white text-sm font-medium bg-black/50 px-3 py-1.5 rounded-full backdrop-blur">Image 1 of {imageCount}</div>
+      <button id="lightbox-close" class="text-white hover:text-slate-300 p-1 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur transition-colors">
+        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+      </button>
+    </div>
+    
+    <button id="lightbox-prev" class="absolute left-4 top-1/2 -translate-y-1/2 text-white p-3 rounded-full bg-black/50 hover:bg-black/80 backdrop-blur transition-colors z-10">
+      <svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" /></svg>
+    </button>
+    
+    <button id="lightbox-next" class="absolute right-4 top-1/2 -translate-y-1/2 text-white p-3 rounded-full bg-black/50 hover:bg-black/80 backdrop-blur transition-colors z-10">
+      <svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+    </button>
+    
+    <img id="lightbox-img" src="" alt="Fullscreen image" class="max-h-screen max-w-full object-contain pointer-events-none select-none transition-opacity duration-200" />
+  </div>
+
+  <script id="images-data" type="application/json" set:html={JSON.stringify(images)}></script>
+
   <script>
     document.addEventListener("DOMContentLoaded", () => {
-      // Gallery thumbnail click handler
-      const mainImg = document.getElementById("main-gallery-image") as HTMLImageElement;
-      const thumbnails = document.querySelectorAll(".gallery-thumbnail");
-
-      thumbnails.forEach((btn) => {
-        btn.addEventListener("click", (e) => {
-          const target = e.currentTarget as HTMLElement;
-          const newSrc = target.getAttribute("data-image");
-          if (mainImg && newSrc) {
-            mainImg.src = newSrc;
+      // --- Image Gallery Logic ---
+      const imagesDataEl = document.getElementById('images-data');
+      if (imagesDataEl) {
+        const imagesList = JSON.parse(imagesDataEl.textContent || '[]');
+        
+        if (imagesList.length > 0) {
+          let currentIndex = 0;
+          const mainImg = document.getElementById("main-gallery-image") as HTMLImageElement;
+          const loader = document.getElementById("image-loader");
+          const counter = document.getElementById("gallery-counter");
+          const thumbnails = document.querySelectorAll(".gallery-thumbnail");
+          
+          const lightbox = document.getElementById("lightbox");
+          const lightboxImg = document.getElementById("lightbox-img") as HTMLImageElement;
+          const lightboxCounter = document.getElementById("lightbox-counter");
+          
+          function updateGallery(index: number) {
+            if (index < 0) index = imagesList.length - 1;
+            if (index >= imagesList.length) index = 0;
+            currentIndex = index;
+            
+            const newSrc = imagesList[currentIndex];
+            
+            if (mainImg && mainImg.src !== newSrc) {
+              if (loader) loader.style.display = 'flex';
+              mainImg.classList.add('opacity-0');
+              mainImg.src = newSrc;
+              mainImg.setAttribute('data-index', currentIndex.toString());
+            }
+            
+            if (counter) counter.textContent = `Image ${currentIndex + 1} of ${imagesList.length}`;
+            
             thumbnails.forEach((t) => {
-              t.classList.remove("border-blue-600", "ring-2", "ring-blue-600/20");
-              t.classList.add("border-slate-200");
+              const tIdx = parseInt(t.getAttribute("data-index") || "0", 10);
+              if (tIdx === currentIndex) {
+                t.classList.remove("opacity-60", "border-transparent");
+                t.classList.add("ring-2", "ring-blue-600", "opacity-100");
+                t.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+              } else {
+                t.classList.add("opacity-60", "border-transparent");
+                t.classList.remove("ring-2", "ring-blue-600", "opacity-100");
+              }
             });
-            target.classList.remove("border-slate-200");
-            target.classList.add("border-blue-600", "ring-2", "ring-blue-600/20");
+            
+            if (lightbox && !lightbox.classList.contains("hidden") && lightboxImg) {
+              lightboxImg.classList.add("opacity-50");
+              lightboxImg.src = newSrc;
+              lightboxImg.onload = () => lightboxImg.classList.remove("opacity-50");
+              if (lightboxCounter) lightboxCounter.textContent = `Image ${currentIndex + 1} of ${imagesList.length}`;
+            }
+            
+            // preload next and prev
+            if (imagesList.length > 1) {
+              const nextIdx = (currentIndex + 1) % imagesList.length;
+              const prevIdx = (currentIndex - 1 + imagesList.length) % imagesList.length;
+              new Image().src = imagesList[nextIdx];
+              new Image().src = imagesList[prevIdx];
+            }
           }
-        });
-      });
+
+          thumbnails.forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+              const target = e.currentTarget as HTMLElement;
+              const idx = parseInt(target.getAttribute("data-index") || "0", 10);
+              updateGallery(idx);
+            });
+          });
+
+          document.getElementById("prev-image-btn")?.addEventListener("click", (e) => { e.stopPropagation(); updateGallery(currentIndex - 1); });
+          document.getElementById("next-image-btn")?.addEventListener("click", (e) => { e.stopPropagation(); updateGallery(currentIndex + 1); });
+          
+          document.getElementById("lightbox-prev")?.addEventListener("click", (e) => { e.stopPropagation(); updateGallery(currentIndex - 1); });
+          document.getElementById("lightbox-next")?.addEventListener("click", (e) => { e.stopPropagation(); updateGallery(currentIndex + 1); });
+          
+          const openLightbox = () => {
+            if (!lightbox || imagesList.length === 0) return;
+            lightbox.classList.remove("hidden");
+            lightbox.classList.add("flex");
+            document.body.style.overflow = "hidden";
+            updateGallery(currentIndex);
+          };
+          
+          document.getElementById("open-lightbox-btn")?.addEventListener("click", openLightbox);
+          if (mainImg) mainImg.addEventListener("click", openLightbox);
+          
+          const closeLightbox = () => {
+            if (!lightbox) return;
+            lightbox.classList.add("hidden");
+            lightbox.classList.remove("flex");
+            document.body.style.overflow = "";
+          };
+          
+          document.getElementById("lightbox-close")?.addEventListener("click", closeLightbox);
+          lightbox?.addEventListener("click", (e) => {
+            if (e.target === lightbox) closeLightbox();
+          });
+
+          document.addEventListener("keydown", (e) => {
+            if (!lightbox?.classList.contains("hidden")) {
+              if (e.key === "Escape") closeLightbox();
+              if (e.key === "ArrowLeft") updateGallery(currentIndex - 1);
+              if (e.key === "ArrowRight") updateGallery(currentIndex + 1);
+            } else {
+              if (e.key === "ArrowLeft") updateGallery(currentIndex - 1);
+              if (e.key === "ArrowRight") updateGallery(currentIndex + 1);
+            }
+          });
+
+          let touchStartX = 0;
+          let touchEndX = 0;
+          
+          const handleSwipe = () => {
+            const swipeThreshold = 50;
+            if (touchEndX < touchStartX - swipeThreshold) updateGallery(currentIndex + 1);
+            if (touchEndX > touchStartX + swipeThreshold) updateGallery(currentIndex - 1);
+          };
+          
+          const mainContainer = document.getElementById("main-image-container");
+          if (mainContainer) {
+            mainContainer.addEventListener("touchstart", e => touchStartX = e.changedTouches[0].screenX, {passive: true});
+            mainContainer.addEventListener("touchend", e => { touchEndX = e.changedTouches[0].screenX; handleSwipe(); }, {passive: true});
+          }
+          if (lightbox) {
+            lightbox.addEventListener("touchstart", e => touchStartX = e.changedTouches[0].screenX, {passive: true});
+            lightbox.addEventListener("touchend", e => { touchEndX = e.changedTouches[0].screenX; handleSwipe(); }, {passive: true});
+          }
+        }
+      }
 
       // Copy URL button handler
       const copyBtn = document.getElementById("copy-url-btn");

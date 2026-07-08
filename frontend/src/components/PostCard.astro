@@ -6,8 +6,14 @@ interface Props {
 }
 
 const { post } = Astro.props;
-// Never use screenshots, use original Facebook URLs directly
-const images = (post.images || []).filter((img: string) => !img.includes('supabase.co'));
+let images = post.image_urls || [];
+if (images.length === 0 && post.images) {
+  let oldImages = Array.isArray(post.images) ? post.images : [];
+  if (typeof post.images === 'string') {
+    try { oldImages = JSON.parse(post.images); } catch(e) {}
+  }
+  images = oldImages.filter((img: string) => !img.includes('supabase.co'));
+}
 const firstImage = images[0] || null;
 const imageCount = images.length;
 const truncatedBody = post.body ? (post.body.length > 100 ? post.body.slice(0, 100) + '...' : post.body) : 'No description available.';
@@ -36,14 +42,13 @@ const thumbnail = post.video_thumbnail || firstImage || null;
         class="h-full w-full object-cover object-center transition-transform duration-300 hover:scale-105" 
       />
     ) : images.length > 0 ? (
-      <div class="flex flex-col h-full w-full overflow-y-auto bg-slate-50 p-4 items-start justify-center gap-2">
-        {images.map((url, idx) => (
-          <a href={url} target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline text-xs break-all truncate w-full" onclick="event.stopPropagation()">
-            <span class="font-medium mr-1 text-slate-700">[{idx + 1}]</span>
-            {url}
-          </a>
-        ))}
-      </div>
+      <img 
+        src={firstImage} 
+        alt={author + " post image"} 
+        loading="lazy" 
+        referrerpolicy="no-referrer"
+        class="h-full w-full object-cover object-center transition-transform duration-300 hover:scale-105" 
+      />
     ) : (
       <div class="flex h-full w-full items-center justify-center bg-slate-100 text-slate-400">
         <span class="text-sm font-medium">No Image</span>
