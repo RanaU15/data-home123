@@ -250,7 +250,6 @@ async function upsertPostToSupabase(posts) {
                             author_avatar: post.author_avatar,
                             author_profile_url: post.author_profile_url,
                             post_url: post.post_url,
-                            facebook_time: post.facebook_time,
                             scraped_at: post.scraped_at,
                             facebook_video_url: post.facebook_video_url
                         };
@@ -262,7 +261,6 @@ async function upsertPostToSupabase(posts) {
                             
                         if (updateRes.error && (updateRes.error.message.includes("schema cache") || updateRes.error.message.includes("Could not find the"))) {
                             if (updateRes.error.message.includes("facebook_video_url")) delete updatePayload.facebook_video_url;
-                            if (updateRes.error.message.includes("facebook_time")) delete updatePayload.facebook_time;
                             if (updateRes.error.message.includes("image_urls")) {
                                 console.warn(`\n⚠️  WARNING: The 'image_urls' column is missing in your Supabase database!`);
                                 delete updatePayload.image_urls;
@@ -330,8 +328,7 @@ async function upsertPostToSupabase(posts) {
             temporary_id: post.temporary_id,
             needs_permalink: post.needs_permalink,
             facebook_post_id: post.facebook_post_id,
-            facebook_video_url: post.facebook_video_url,
-            facebook_time: post.facebook_time
+            facebook_video_url: post.facebook_video_url
         }));
 
         let { data, error } = await supabase
@@ -346,10 +343,6 @@ async function upsertPostToSupabase(posts) {
                 console.warn(`\n⚠️  WARNING: The 'facebook_video_url' column is missing in your Supabase database!`);
                 console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_video_url TEXT;`);
             }
-            if (error.message.includes("facebook_time")) {
-                console.warn(`\n⚠️  WARNING: The 'facebook_time' column is missing in your Supabase database!`);
-                console.warn(`⚠️  ALTER TABLE posts ADD COLUMN IF NOT EXISTS facebook_time TEXT;`);
-            }
             if (error.message.includes("image_urls")) {
                 console.warn(`\n⚠️  CRITICAL WARNING: The 'image_urls' column is missing in your Supabase database!`);
                 console.warn(`⚠️  Images will NOT be saved until you add this column!`);
@@ -359,9 +352,6 @@ async function upsertPostToSupabase(posts) {
             const fallbackPosts = cleanPosts.map(p => {
                 const copy = { ...p };
                 if (error.message.includes("facebook_video_url")) delete copy.facebook_video_url;
-                if (error.message.includes("facebook_time")) {
-                    delete copy.facebook_time;
-                }
                 if (error.message.includes("image_urls")) delete copy.image_urls;
                 return copy;
             });

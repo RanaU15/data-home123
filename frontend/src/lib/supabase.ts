@@ -9,7 +9,6 @@ export interface Post {
   author_profile_url?: string;
   author_avatar?: string;
   body?: string;
-  facebook_time?: string;
   permalink?: string;
   post_url?: string;
   likes?: number;
@@ -76,25 +75,24 @@ export function formatDate(dateStr?: string): string {
   try {
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(d);
+    
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true
+    });
   } catch (e) {
     return dateStr;
   }
 }
 
 export function getDisplayDate(post: Post): string {
-  if (post.facebook_time && typeof post.facebook_time === 'string') {
-    const text = post.facebook_time.trim();
-    if (!/^(Unknown|Invalid Date|null|undefined|N\/A)$/i.test(text)) {
-      return text;
-    }
+  if (post.scraped_at) {
+    return formatDate(post.scraped_at);
   }
   return '';
 }

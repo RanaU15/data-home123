@@ -739,7 +739,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 return await locator.evaluate((el, passedBody) => {
                     let permalinkObj = null;
                     let bestUrl = null;
-                    let bestTimestamp = null;
                     let bestType = "UNKNOWN";
 
                     // 1. Gather all anchors in the feed card
@@ -796,22 +795,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                         if (match) {
                             bestUrl = match.href;
                             bestType = pattern.type;
-
-                            if (match.element) {
-                                const text = (match.element.innerText || match.element.textContent || "").trim();
-                                if (text) {
-                                    bestTimestamp = text;
-                                } else {
-                                    bestTimestamp = null;
-                                    console.log("Timestamp element not found.");
-                                }
-                                console.log("\n--- TEMPORARY DEBUG HTML ---");
-                                console.log(match.element.outerHTML);
-                                console.log("----------------------------\n");
-                            } else {
-                                bestTimestamp = null;
-                                console.log("Timestamp element not found.");
-                            }
                             break; // Stop at highest priority pattern match
                         }
                     }
@@ -836,7 +819,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     }
 
                     if (bestUrl) {
-                        permalinkObj = { url: bestUrl, timestamp: bestTimestamp, type: bestType };
+                        permalinkObj = { url: bestUrl, type: bestType };
                     }
 
                     let bodyText = passedBody || "";
@@ -1195,14 +1178,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
             let permalink = cleanPermalink(rawPermalink);
             let facebookPostId = normalizeFacebookPostId(permalink);
-            let facebook_time = data.permalinkObj ? data.permalinkObj.timestamp : null;
-            console.log("\n========== FACEBOOK TIMESTAMP ==========");
-            if (facebook_time) {
-                console.log(`Extracted facebook_time: ${facebook_time}`);
-            } else {
-                console.log("Timestamp element not found.");
-            }
-            console.log("========================================");
 
             let isOldPost = false;
             console.log("Old post check bypassed");
@@ -1572,50 +1547,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             
             data.bodyText = cleanFacebookBody(data.bodyText || "");
             
-            function parseFacebookDate(dateStr) {
-                if (!dateStr || dateStr.toLowerCase() === "today") return new Date().toISOString();
-                let d = new Date();
-                dateStr = dateStr.trim().toLowerCase();
-                
-                if (dateStr.includes("just now")) return d.toISOString();
-                
-                const mMatch = dateStr.match(/^(\d+)\s*m/);
-                if (mMatch) { d.setMinutes(d.getMinutes() - parseInt(mMatch[1])); return d.toISOString(); }
-                
-                const hMatch = dateStr.match(/^(\d+)\s*h/);
-                if (hMatch) { d.setHours(d.getHours() - parseInt(hMatch[1])); return d.toISOString(); }
-                
-                const dMatch = dateStr.match(/^(\d+)\s*d/);
-                if (dMatch) { d.setDate(d.getDate() - parseInt(dMatch[1])); return d.toISOString(); }
 
-                if (dateStr.includes("yesterday")) {
-                    d.setDate(d.getDate() - 1);
-                    const tMatch = dateStr.match(/at (\d+):(\d+)\s*(am|pm)/i);
-                    if (tMatch) {
-                        let [_, h, m, ampm] = tMatch;
-                        h = parseInt(h);
-                        if (ampm === "pm" && h !== 12) h += 12;
-                        if (ampm === "am" && h === 12) h = 0;
-                        d.setHours(h, parseInt(m), 0, 0);
-                    }
-                    return d.toISOString();
-                }
-                
-                const parsed = new Date(dateStr.replace(' at ', ' '));
-                if (!isNaN(parsed.getTime())) {
-                    if (parsed.getFullYear() === 2001) parsed.setFullYear(new Date().getFullYear());
-                    if (parsed > new Date()) parsed.setFullYear(parsed.getFullYear() - 1);
-                    return parsed.toISOString();
-                }
-                
-                return d.toISOString();
-            }
-
-            console.log("\n=========================");
-            console.log("SCRAPE TIME");
-            console.log("=========================");
-            console.log(`Display:\n${facebook_time}`);
-            console.log("=========================\n");
 
             const postObj = {
                 id: permalink,
@@ -1626,7 +1558,6 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 author_profile_url: data.author_profile_url,
                 author_avatar: data.author_avatar,
                 body: data.bodyText,
-                facebook_time: facebook_time,
                 permalink: data.permalinkObj ? permalink : null,
                 post_url: data.permalinkObj ? permalink : null,
                 likes: data.likes || 0,
@@ -1845,7 +1776,7 @@ async function runOnceScrape() {
                         const cleanAuthor = post.author.replace(/"/g, '""');
                         const cleanBody = post.body.replace(/"/g, '""');
                         const imagesJson = JSON.stringify(post.image_urls || []).replace(/"/g, '""');
-                        csvContent += `"${post.id}","${post.group_name}","${post.group_url}","${cleanAuthor}","${post.facebook_time || ''}","${post.permalink || ''}","${post.likes}","${post.comments}","${post.shares}","${post.screenshot || ''}","${imagesJson}","${cleanBody}"\n`;
+                        csvContent += `"${post.id}","${post.group_name}","${post.group_url}","${cleanAuthor}","${post.scraped_at || ''}","${post.permalink || ''}","${post.likes}","${post.comments}","${post.shares}","${post.screenshot || ''}","${imagesJson}","${cleanBody}"\n`;
                     }
                 });
                 if (hasCsv && csvContent.length > 0) {
@@ -1924,7 +1855,7 @@ async function handleExit() {
                 const cleanAuthor = post.author.replace(/"/g, '""');
                 const cleanBody = post.body.replace(/"/g, '""');
                 const imagesJson = JSON.stringify(post.image_urls || []).replace(/"/g, '""');
-                csvContent += `"${post.id}","${post.group_name}","${post.group_url}","${cleanAuthor}","${post.facebook_time || ''}","${post.permalink || ''}","${post.likes}","${post.comments}","${post.shares}","${post.screenshot || ''}","${imagesJson}","${cleanBody}"\n`;
+                csvContent += `"${post.id}","${post.group_name}","${post.group_url}","${cleanAuthor}","${post.scraped_at || ''}","${post.permalink || ''}","${post.likes}","${post.comments}","${post.shares}","${post.screenshot || ''}","${imagesJson}","${cleanBody}"\n`;
             }
         });
         if (hasCsv && csvContent.length > 0) {
