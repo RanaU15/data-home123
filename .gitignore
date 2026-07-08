@@ -14,6 +14,7 @@ status.json
 posts.json
 posts.csv
 posts.db
+scraper/browser_data/
 images/
 *.png
 *.html
