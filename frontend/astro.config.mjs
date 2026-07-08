@@ -1,10 +1,10 @@
 import { defineConfig } from 'astro/config';
 import tailwindcss from '@tailwindcss/vite';
 
-const isCloudflare = process.env.CF_PAGES === '1';
+const isDev = process.env.npm_lifecycle_event === 'dev';
 
 let adapter;
-if (isCloudflare) {
+if (!isDev) {
   const mod = await import('@astrojs/cloudflare');
   adapter = mod.default();
 } else {
