@@ -6,6 +6,6 @@
     "directory": "./dist"
   },
   "build": {
-    "command": "npm run build"
+    "command": "CF_PAGES=1 npm run build"
   }
 }
