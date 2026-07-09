@@ -2,6 +2,17 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, '../.env') });
 const { createClient } = require("@supabase/supabase-js");
 const fs = require("fs");
+const fs = require("fs");
+let pipeline = null;
+let extractor = null;
+try {
+    const transformers = require("@xenova/transformers");
+    pipeline = transformers.pipeline;
+    transformers.env.allowLocalModels = true;
+    transformers.env.useBrowserCache = false;
+} catch (e) {
+    console.warn("⚠️ @xenova/transformers not available. Embeddings won't be generated.");
+}
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -330,6 +341,22 @@ async function upsertPostToSupabase(posts) {
             facebook_post_id: post.facebook_post_id,
             facebook_video_url: post.facebook_video_url
         }));
+
+        if (pipeline) {
+            try {
+                if (!extractor) {
+                    console.log("Loading embedding model...");
+                    extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+                }
+                for (const post of cleanPosts) {
+                    const textToEmbed = [post.body, post.author, post.group_name, post.location, post.post_type].filter(Boolean).join(" ");
+                    const output = await extractor(textToEmbed, { pooling: 'mean', normalize: true });
+                    post.embedding = Array.from(output.data);
+                }
+            } catch (err) {
+                console.error("Failed to generate embeddings:", err);
+            }
+        }
 
         let { data, error } = await supabase
             .from("posts")

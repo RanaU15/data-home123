@@ -14,6 +14,8 @@ const to = from + pageSize - 1;
 import { filterPosts, normalizeQuery } from '../lib/filters';
 import { getAllPosts } from '../lib/data';
 
+import { performHybridSearch } from '../lib/hybridSearch';
+
 const q = Astro.url.searchParams.get('q') || '';
 
 // Fetch all posts from the DB across all pages
@@ -22,7 +24,7 @@ let validPosts = allPosts;
 
 if (q) {
   const parsedFilters = normalizeQuery(q);
-  validPosts = filterPosts(validPosts, parsedFilters);
+  validPosts = await performHybridSearch(allPosts, q, parsedFilters);
 }
 
 const totalPosts = validPosts.length;

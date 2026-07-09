@@ -5,6 +5,7 @@ import SkeletonCard from '../components/SkeletonCard.astro';
 import { type Post } from '../lib/supabase';
 import { getAllPosts } from '../lib/data';
 import { filterPosts, type FilterState } from '../lib/filters';
+import { performHybridSearch } from '../lib/hybridSearch';
 
 const currentPage = Math.max(1, parseInt(Astro.url.searchParams.get('page') || '1', 10));
 const pageSize = 18;
@@ -23,8 +24,14 @@ const filters: FilterState = {
   requirements: requirementsParam
 };
 
+// Formulate a semantic query text out of location + propertyTypes
+const semanticQueryTerms = [];
+if (locationParam) semanticQueryTerms.push(locationParam);
+if (propertyTypesParam.length > 0) semanticQueryTerms.push(propertyTypesParam.join(" "));
+const semanticQueryText = semanticQueryTerms.join(" ");
+
 const allPosts = await getAllPosts();
-const filteredPosts = filterPosts(allPosts, filters);
+const filteredPosts = await performHybridSearch(allPosts, semanticQueryText, filters);
 
 const totalPosts = filteredPosts.length;
 const totalPages = Math.max(1, Math.ceil(totalPosts / pageSize));

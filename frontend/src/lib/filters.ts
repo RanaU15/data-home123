@@ -20,13 +20,13 @@ export function normalizePost(text: string): string {
 }
 
 // The exact logic from the Sidebar filters (search.astro)
-export function matchesPost(body: string, filters: FilterState): boolean {
+export function matchesPost(body: string, filters: FilterState, strictLocation: boolean = true): boolean {
   if (!body) return false;
   body = body.toLowerCase();
 
   // --- 1. Location Filter ---
   const locQuery = filters.location ? filters.location.toLowerCase().trim() : "";
-  const matchesLocation = !locQuery || body.includes(locQuery);
+  const matchesLocation = !strictLocation || !locQuery || body.includes(locQuery);
 
   // --- 2. Budget Filter ---
   let matchesBudget = true;
@@ -83,11 +83,11 @@ export function matchesPost(body: string, filters: FilterState): boolean {
   return matchesLocation && matchesBudget && matchesType && matchesTenant && matchesRequirement;
 }
 
-export function filterPosts(posts: any[], filters: FilterState): any[] {
+export function filterPosts(posts: any[], filters: FilterState, strictLocation: boolean = true): any[] {
   return posts.filter(post => {
     // combine all searchable text just like search.astro's data-body
     const body = [post.body, post.author, post.group_name, post.location, post.property_type, post.preferred_tenant, post.requirement, post.post_type].filter(Boolean).join(" ").toLowerCase();
-    return matchesPost(body, filters);
+    return matchesPost(body, filters, strictLocation);
   });
 }
 
