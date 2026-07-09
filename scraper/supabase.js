@@ -253,19 +253,19 @@ async function upsertPostToSupabase(posts) {
                             scraped_at: post.scraped_at,
                             facebook_video_url: post.facebook_video_url
                         };
-                        
+
                         let updateRes = await supabase
                             .from("posts")
                             .update(updatePayload)
                             .eq("id", temp.id);
-                            
+
                         if (updateRes.error && (updateRes.error.message.includes("schema cache") || updateRes.error.message.includes("Could not find the"))) {
                             if (updateRes.error.message.includes("facebook_video_url")) delete updatePayload.facebook_video_url;
                             if (updateRes.error.message.includes("image_urls")) {
                                 console.warn(`\n⚠️  WARNING: The 'image_urls' column is missing in your Supabase database!`);
                                 delete updatePayload.image_urls;
                             }
-                            
+
                             updateRes = await supabase
                                 .from("posts")
                                 .update(updatePayload)
@@ -274,7 +274,7 @@ async function upsertPostToSupabase(posts) {
                     }
                 }
             }
-            
+
             // Auto-heal missing IDs: If the scraper failed to extract a permalink this run
             // but the post already exists in the DB (by temporary_id), we MUST inherit the 
             // existing row's true `id` and `permalink` so the upsert updates it instead of violating constraints.
@@ -284,7 +284,7 @@ async function upsertPostToSupabase(posts) {
                     .select("id, facebook_post_id, permalink")
                     .eq("temporary_id", post.temporary_id)
                     .maybeSingle();
-                
+
                 if (existing) {
                     post.id = existing.id;
                     if (existing.permalink && !post.permalink) {
@@ -348,21 +348,21 @@ async function upsertPostToSupabase(posts) {
                 console.warn(`⚠️  Images will NOT be saved until you add this column!`);
             }
             console.warn(`⚠️  Retrying upload without the missing columns to prevent crashing...\n`);
-            
+
             const fallbackPosts = cleanPosts.map(p => {
                 const copy = { ...p };
                 if (error.message.includes("facebook_video_url")) delete copy.facebook_video_url;
                 if (error.message.includes("image_urls")) delete copy.image_urls;
                 return copy;
             });
-            
+
             const fallbackRes = await supabase
                 .from("posts")
                 .upsert(fallbackPosts, {
                     onConflict: "id",
                     ignoreDuplicates: false
                 });
-                
+
             data = fallbackRes.data;
             error = fallbackRes.error;
         }
@@ -396,7 +396,7 @@ async function getPostStatusInSupabase(groupId, facebookPostId, temporaryId) {
     if (!supabase) return null;
     try {
         let query = supabase.from("posts").select("id, video_urls, has_video, image_urls, body").eq("group_id", groupId);
-        
+
         if (facebookPostId) {
             query = query.eq("facebook_post_id", facebookPostId);
         } else if (temporaryId) {
@@ -404,7 +404,7 @@ async function getPostStatusInSupabase(groupId, facebookPostId, temporaryId) {
         } else {
             return null;
         }
-        
+
         const { data, error } = await query.limit(1);
         if (!error && data && data.length > 0) {
             return data[0];
@@ -427,7 +427,7 @@ async function checkDuplicateInSupabase(groupId, facebookPostId, postUrl, tempor
                 .limit(1);
             if (!error && data && data.length > 0) return true;
         }
-        
+
         if (postUrl) {
             const { data, error } = await supabase
                 .from("posts")
@@ -436,7 +436,7 @@ async function checkDuplicateInSupabase(groupId, facebookPostId, postUrl, tempor
                 .eq("post_url", postUrl)
                 .limit(1);
             if (!error && data && data.length > 0) return true;
-            
+
             // Also check 'permalink' column just in case since they both represent the URL
             const { data: permData, error: permError } = await supabase
                 .from("posts")
@@ -446,7 +446,7 @@ async function checkDuplicateInSupabase(groupId, facebookPostId, postUrl, tempor
                 .limit(1);
             if (!permError && permData && permData.length > 0) return true;
         }
-        
+
         if (temporaryId) {
             const { data, error } = await supabase
                 .from("posts")

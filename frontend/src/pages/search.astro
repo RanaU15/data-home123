@@ -2,15 +2,43 @@
 import Layout from '../layouts/Layout.astro';
 import PostCard from '../components/PostCard.astro';
 import SkeletonCard from '../components/SkeletonCard.astro';
-import { supabase, type Post } from '../lib/supabase';
+import { type Post } from '../lib/supabase';
+import { getAllPosts } from '../lib/data';
+import { filterPosts, type FilterState } from '../lib/filters';
 
-// Fetch all posts to allow instant client-side search & filtering with pagination
-const { data: posts, error } = await supabase
-  .from('posts')
-  .select('*')
-  .order('scraped_at', { ascending: false });
+const currentPage = Math.max(1, parseInt(Astro.url.searchParams.get('page') || '1', 10));
+const pageSize = 18;
 
-const validPosts = (!error && posts) ? posts : [];
+const locationParam = Astro.url.searchParams.get('location') || '';
+const budgetParam = Astro.url.searchParams.get('budget');
+const propertyTypesParam = Astro.url.searchParams.getAll('propertyTypes[]');
+const preferredTenantsParam = Astro.url.searchParams.getAll('preferredTenants[]');
+const requirementsParam = Astro.url.searchParams.getAll('requirements[]');
+
+const filters: FilterState = {
+  location: locationParam,
+  budget: budgetParam ? parseInt(budgetParam, 10) : null,
+  propertyTypes: propertyTypesParam,
+  preferredTenants: preferredTenantsParam,
+  requirements: requirementsParam
+};
+
+const allPosts = await getAllPosts();
+const filteredPosts = filterPosts(allPosts, filters);
+
+const totalPosts = filteredPosts.length;
+const totalPages = Math.max(1, Math.ceil(totalPosts / pageSize));
+const startIndex = (currentPage - 1) * pageSize;
+const endIndex = Math.min(startIndex + pageSize, totalPosts);
+
+const pagePosts = filteredPosts.slice(startIndex, endIndex);
+const validPosts = filteredPosts;
+
+function getPaginationUrl(page: number) {
+  const params = new URLSearchParams(Astro.url.searchParams);
+  params.set('page', page.toString());
+  return '?' + params.toString();
+}
 
 // Common areas in Ahmedabad with their rough coordinates
 const AHMEDABAD_AREAS = [
@@ -77,6 +105,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
               type="text" 
               id="filter-location" 
               placeholder="e.g. Bopal, Satellite..." 
+              value={filters.location}
               class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none transition-all"
             />
           </div>
@@ -95,6 +124,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
               type="number" 
               id="filter-budget" 
               placeholder="Max amount..." 
+              value={filters.budget || ''}
               class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none transition-all"
             />
           </div>
@@ -106,27 +136,27 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
           <label class="block text-sm font-semibold text-slate-700 mb-3">Property Type</label>
           <div class="space-y-2">
             <label class="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" value="1bhk" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <input type="checkbox" value="1bhk" checked={filters.propertyTypes?.includes("1bhk")} class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">1 BHK</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" value="2bhk" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <input type="checkbox" value="2bhk" checked={filters.propertyTypes?.includes("2bhk")} class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">2 BHK</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" value="3bhk" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <input type="checkbox" value="3bhk" checked={filters.propertyTypes?.includes("3bhk")} class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">3 BHK</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" value="4bhk" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <input type="checkbox" value="4bhk" checked={filters.propertyTypes?.includes("4bhk")} class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">4 BHK</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" value="boyspg" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <input type="checkbox" value="boyspg" checked={filters.propertyTypes?.includes("boyspg")} class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">Boys PG</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" value="girlspg" class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <input type="checkbox" value="girlspg" checked={filters.propertyTypes?.includes("girlspg")} class="filter-type h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">Girls PG</span>
             </label>
           </div>
@@ -137,11 +167,11 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
           <label class="block text-sm font-semibold text-slate-700 mb-3">Preferred Tenant</label>
           <div class="space-y-2">
             <label class="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" value="bacelor" class="filter-tenant h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <input type="checkbox" value="bacelor" checked={filters.preferredTenants?.includes("bacelor")} class="filter-tenant h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">Bachelors</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" value="families" class="filter-tenant h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <input type="checkbox" value="families" checked={filters.preferredTenants?.includes("families")} class="filter-tenant h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">Families</span>
             </label>
           </div>
@@ -152,11 +182,11 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
           <label class="block text-sm font-semibold text-slate-700 mb-3">Requirement</label>
           <div class="space-y-2">
             <label class="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" value="flat" class="filter-requirement h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <input type="checkbox" value="flat" checked={filters.requirements?.includes("flat")} class="filter-requirement h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">Looking for Flat / Rent</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" value="flatmate" class="filter-requirement h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <input type="checkbox" value="flatmate" checked={filters.requirements?.includes("flatmate")} class="filter-requirement h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">Looking for Flatmate</span>
             </label>
           </div>
@@ -199,9 +229,9 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       <!-- Search Results Container -->
       <div id="results-container">
         <div id="results-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {validPosts.map((post: Post) => (
+          {pagePosts.map((post: Post) => (
             <div 
-              class="post-filter-wrapper" 
+              class="post-filter-wrapper h-full" 
               data-body={(post.body || '').toLowerCase()} 
             >
               <PostCard post={post} />
@@ -212,54 +242,54 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
         <!-- Pagination Controls -->
         <div id="pagination-wrapper" class="mt-12 flex items-center justify-between border-t border-slate-200 pt-6">
           <div class="flex flex-1 items-center justify-between sm:hidden">
-            <button 
-              type="button" 
+            <a 
+              href={currentPage > 1 ? getPaginationUrl(currentPage - 1) : '#'} 
               id="prev-page-mobile" 
-              class="relative inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
+              class={`relative inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 cursor-pointer ${currentPage <= 1 ? 'pointer-events-none opacity-50' : ''}`}
             >
               Previous
-            </button>
-            <button 
-              type="button" 
+            </a>
+            <a 
+              href={currentPage < totalPages ? getPaginationUrl(currentPage + 1) : '#'} 
               id="next-page-mobile" 
-              class="relative ml-3 inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
+              class={`relative ml-3 inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 cursor-pointer ${currentPage >= totalPages ? 'pointer-events-none opacity-50' : ''}`}
             >
               Next
-            </button>
+            </a>
           </div>
           <div class="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
             <div>
               <p class="text-sm text-slate-700">
-                Showing <span id="page-from" class="font-medium">1</span> to <span id="page-to" class="font-medium">20</span> of <span id="page-total" class="font-medium">0</span> results
+                Showing <span id="page-from" class="font-medium">{totalPosts === 0 ? 0 : startIndex + 1}</span> to <span id="page-to" class="font-medium">{endIndex}</span> of <span id="page-total" class="font-medium">{totalPosts}</span> results
               </p>
             </div>
             <div>
               <nav class="inline-flex items-center gap-2" aria-label="Pagination">
-                <button 
-                  type="button" 
+                <a 
+                  href={currentPage > 1 ? getPaginationUrl(currentPage - 1) : '#'} 
                   id="prev-page-btn" 
-                  class="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
+                  class={`inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors cursor-pointer ${currentPage <= 1 ? 'pointer-events-none opacity-50' : ''}`}
                 >
                   <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
                   </svg>
                   <span>Previous</span>
-                </button>
+                </a>
 
                 <span id="page-indicator" class="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 rounded-xl">
-                  Page 1 of 1
+                  Page {currentPage} of {totalPages}
                 </span>
 
-                <button 
-                  type="button" 
+                <a 
+                  href={currentPage < totalPages ? getPaginationUrl(currentPage + 1) : '#'} 
                   id="next-page-btn" 
-                  class="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
+                  class={`inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors cursor-pointer ${currentPage >= totalPages ? 'pointer-events-none opacity-50' : ''}`}
                 >
                   <span>Next</span>
                   <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
-                </button>
+                </a>
               </nav>
             </div>
           </div>
@@ -304,6 +334,8 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
   </style>
 
   <script>
+    import { matchesPost, type FilterState } from '../lib/filters';
+
     document.addEventListener("DOMContentLoaded", () => {
       const inputLocation = document.getElementById("filter-location") as HTMLInputElement;
       const inputBudget = document.getElementById("filter-budget") as HTMLInputElement;
@@ -318,71 +350,9 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       const resetSidebarBtn = document.getElementById("reset-filters-btn-sidebar");
       const resetEmptyBtn = document.getElementById("reset-filters-btn-empty");
       const postWrappers = document.querySelectorAll(".post-filter-wrapper");
-
-      // Pagination elements
-      const prevBtn = document.getElementById("prev-page-btn") as HTMLButtonElement;
-      const nextBtn = document.getElementById("next-page-btn") as HTMLButtonElement;
-      const prevMobile = document.getElementById("prev-page-mobile") as HTMLButtonElement;
-      const nextMobile = document.getElementById("next-page-mobile") as HTMLButtonElement;
-      const pageIndicator = document.getElementById("page-indicator");
-      const pageFrom = document.getElementById("page-from");
-      const pageTo = document.getElementById("page-to");
-      const pageTotal = document.getElementById("page-total");
-
       let filterTimeout: any = null;
-      let currentPage = 1;
-      const pageSize = 20;
-      let matchingPosts: HTMLElement[] = [];
 
-      function updatePaginationView() {
-        const totalPosts = matchingPosts.length;
-        const totalPages = Math.max(1, Math.ceil(totalPosts / pageSize));
-
-        if (currentPage > totalPages) currentPage = totalPages;
-
-        const startIndex = (currentPage - 1) * pageSize;
-        const endIndex = Math.min(startIndex + pageSize, totalPosts);
-
-        // Hide all post wrappers first
-        postWrappers.forEach(elem => { (elem as HTMLElement).style.display = "none"; });
-
-        // Show only matching posts for the current page
-        for (let i = startIndex; i < endIndex; i++) {
-          matchingPosts[i].style.display = "";
-        }
-
-        // Update UI text and button states
-        if (pageFrom) pageFrom.textContent = (totalPosts === 0 ? "0" : (startIndex + 1).toString());
-        if (pageTo) pageTo.textContent = endIndex.toString();
-        if (pageTotal) pageTotal.textContent = totalPosts.toString();
-        if (pageIndicator) pageIndicator.textContent = `Page ${currentPage} of ${totalPages}`;
-
-        const disablePrev = currentPage <= 1;
-        const disableNext = currentPage >= totalPages;
-
-        if (prevBtn) prevBtn.disabled = disablePrev;
-        if (prevMobile) prevMobile.disabled = disablePrev;
-        if (nextBtn) nextBtn.disabled = disableNext;
-        if (nextMobile) nextMobile.disabled = disableNext;
-
-        if (totalPosts > 0) {
-          if (resultsContainer) resultsContainer.classList.remove("hidden");
-          if (noResultsState) noResultsState.classList.add("hidden");
-        } else {
-          if (resultsContainer) resultsContainer.classList.add("hidden");
-          if (noResultsState) noResultsState.classList.remove("hidden");
-        }
-      }
-
-      function extractNumbers(text: string): number[] {
-        // match numbers that might have commas (e.g. 15,000 or 15000)
-        const regex = /\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b|\b\d+\b/g;
-        const matches = text.match(regex);
-        if (!matches) return [];
-        return matches.map(m => parseInt(m.replace(/,/g, ''), 10)).filter(n => !isNaN(n));
-      }
-
-      function filterPosts() {
+      async function filterPosts() {
         if (!resultsContainer || !searchSkeleton || !noResultsState) return;
 
         const locQuery = inputLocation.value.toLowerCase().trim();
@@ -392,6 +362,24 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
         const selectedTenants = tenantCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
         const selectedRequirements = requirementCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
 
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', '1');
+        
+        if (locQuery) url.searchParams.set('location', locQuery);
+        else url.searchParams.delete('location');
+
+        if (!isNaN(budgetValue) && budgetValue > 0) url.searchParams.set('budget', budgetValue.toString());
+        else url.searchParams.delete('budget');
+
+        url.searchParams.delete('propertyTypes[]');
+        selectedTypes.forEach(t => url.searchParams.append('propertyTypes[]', t));
+
+        url.searchParams.delete('preferredTenants[]');
+        selectedTenants.forEach(t => url.searchParams.append('preferredTenants[]', t));
+
+        url.searchParams.delete('requirements[]');
+        selectedRequirements.forEach(t => url.searchParams.append('requirements[]', t));
+
         // Show skeleton loader briefly to indicate background filtering
         resultsContainer.classList.add("hidden");
         noResultsState.classList.add("hidden");
@@ -399,86 +387,52 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
 
         if (filterTimeout) clearTimeout(filterTimeout);
 
-        filterTimeout = setTimeout(() => {
-          searchSkeleton.classList.add("hidden");
-          matchingPosts = [];
+        filterTimeout = setTimeout(async () => {
+          try {
+            const response = await fetch(url.toString());
+            const html = await response.text();
+            
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            
+            const newGrid = doc.getElementById('results-grid');
+            const newPagination = doc.getElementById('pagination-wrapper');
+            const newNoResults = doc.getElementById('no-results-state');
+            
+            const currentGrid = document.getElementById('results-grid');
+            if (currentGrid && newGrid) currentGrid.innerHTML = newGrid.innerHTML;
 
-          postWrappers.forEach((elem) => {
-            const wrapper = elem as HTMLElement;
-            const body = wrapper.getAttribute("data-body") || "";
+            const currentPagination = document.getElementById('pagination-wrapper');
+            if (currentPagination && newPagination) currentPagination.innerHTML = newPagination.innerHTML;
 
-            // --- 1. Location Filter ---
-            const matchesLocation = !locQuery || body.includes(locQuery);
+            const currentNoResults = document.getElementById('no-results-state');
+            if (currentNoResults && newNoResults) currentNoResults.outerHTML = newNoResults.outerHTML;
 
-            // --- 2. Budget Filter ---
-            let matchesBudget = true;
-            if (!isNaN(budgetValue) && budgetValue > 0) {
-              const numbersInPost = extractNumbers(body);
-              // Assume valid rent/price numbers are at least 1000 (to filter out 2bhk, floor 3, etc)
-              const rentNumbers = numbersInPost.filter(n => n >= 1000);
-              if (rentNumbers.length > 0) {
-                matchesBudget = rentNumbers.some(n => n <= budgetValue);
-              } else {
-                // If no numbers > 1000 found, we might exclude it if they specify budget, 
-                // or include it because it might not mention price. Let's strictly exclude if they want a budget limit.
-                matchesBudget = false;
+            const newMapData = doc.getElementById('map-data');
+            if (newMapData) {
+              const currentMapData = document.getElementById('map-data');
+              if (currentMapData) currentMapData.textContent = newMapData.textContent;
+              if (typeof window.initOrUpdateMap === 'function') {
+                window.initOrUpdateMap(JSON.parse(newMapData.textContent || '[]'));
               }
             }
 
-            // --- 3. Property Type Filter ---
-            let matchesType = true;
-            if (selectedTypes.length > 0) {
-              matchesType = selectedTypes.some(type => {
-                if (type === '1bhk') return body.includes('1bhk') || body.includes('1 bhk');
-                if (type === '2bhk') return body.includes('2bhk') || body.includes('2 bhk');
-                if (type === '3bhk') return body.includes('3bhk') || body.includes('3 bhk');
-                if (type === '4bhk') return body.includes('4bhk') || body.includes('4 bhk');
-                if (type === 'boyspg') return body.includes('boy pg') || body.includes('boys pg') || body.includes('boyspg') || body.includes('boy\'s pg');
-                if (type === 'girlspg') return body.includes('girl pg') || body.includes('girls pg') || body.includes('girlspg') || body.includes('girl\'s pg');
-                return false;
-              });
+            window.history.pushState({}, '', url.toString());
+          } catch (e) {
+            console.error("Filter failed", e);
+          } finally {
+            searchSkeleton.classList.add("hidden");
+            // We don't toggle resultsContainer hidden state here, we rely on the returned HTML structure
+            // Wait, actually, the returned HTML has resultsContainer. Let's just swap it.
+            const newResultsContainer = document.getElementById('results-container');
+            if (newResultsContainer) {
+              newResultsContainer.classList.remove("hidden");
             }
-
-            // --- 4. Tenant Filter ---
-            let matchesTenant = true;
-            if (selectedTenants.length > 0) {
-              matchesTenant = selectedTenants.some(tenant => {
-                if (tenant === 'bacelor') return body.includes('bacelor') || body.includes('bachelor');
-                if (tenant === 'families') return body.includes('families') || body.includes('family');
-                return false;
-              });
-            }
-
-            // --- 5. Requirement Filter ---
-            let matchesRequirement = true;
-            if (selectedRequirements.length > 0) {
-              matchesRequirement = selectedRequirements.some(req => {
-                if (req === 'flat') return body.includes('looking for flat') || body.includes('looking for flate') || body.includes('need a flat') || body.includes('need flat') || body.includes('available for rent') || body.includes('rent') || body.includes('to let') || body.includes('flat available') || body.includes('flate available');
-                if (req === 'flatmate') return body.includes('looking for flatmate') || body.includes('looking for flatemate') || body.includes('looking for flatement') || body.includes('looking for flatemants') || body.includes('need flatmate') || body.includes('flatmate required') || body.includes('roommate') || body.includes('room partner') || body.includes('pg') || body.includes('sharing');
-                return false;
-              });
-            }
-
-            if (matchesLocation && matchesBudget && matchesType && matchesTenant && matchesRequirement) {
-              matchingPosts.push(wrapper);
-            }
-          });
-
-          // Reset to page 1 on filter change
-          currentPage = 1;
-          updatePaginationView();
-        }, 250);
+          }
+        }, 300);
       }
 
-      // Read initial location query if any
-      const urlParams = new URLSearchParams(window.location.search);
-      const urlLocation = urlParams.get('location');
-      if (urlLocation && inputLocation) {
-        inputLocation.value = urlLocation;
-      }
-      
-      // Initial filter run to set up pagination
-      filterPosts();
+      // We do not run filterPosts() on mount anymore because the server already rendered it!
 
       if (inputLocation) inputLocation.addEventListener("input", filterPosts);
       if (inputBudget) inputBudget.addEventListener("input", filterPosts);
@@ -487,16 +441,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       tenantCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
       requirementCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
 
-      function goToPage(newPage: number) {
-        currentPage = newPage;
-        updatePaginationView();
-        document.getElementById('results-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
 
-      if (prevBtn) prevBtn.addEventListener("click", () => goToPage(currentPage - 1));
-      if (prevMobile) prevMobile.addEventListener("click", () => goToPage(currentPage - 1));
-      if (nextBtn) nextBtn.addEventListener("click", () => goToPage(currentPage + 1));
-      if (nextMobile) nextMobile.addEventListener("click", () => goToPage(currentPage + 1));
 
       function resetAllFilters() {
         if (inputLocation) inputLocation.value = "";
@@ -511,18 +456,40 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       if (resetEmptyBtn) resetEmptyBtn.addEventListener("click", resetAllFilters);
 
       // --- INITIALIZE MAP ---
+      let map: any = null;
+      let mapMarkers: any[] = [];
       const mapContainer = document.getElementById('map');
-      const dataScript = document.getElementById('map-data');
-      
-      if (mapContainer && dataScript) {
-        const map = L.map('map').setView([23.04, 72.53], 12);
 
-        L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-          attribution: '&copy; Google Maps',
-          maxZoom: 20
-        }).addTo(map);
+      // Make it accessible globally for filterPosts inside DOMContentLoaded
+      window.initOrUpdateMap = function(areas: any[]) {
+        if (!mapContainer || typeof L === 'undefined') return;
 
-        const areas = JSON.parse(dataScript.textContent || '[]');
+        if (!map) {
+          map = L.map('map').setView([23.04, 72.53], 12);
+          L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+            attribution: '&copy; Google Maps',
+            maxZoom: 20
+          }).addTo(map);
+
+          // Handle clicks on the "Filter Area" buttons inside leaflet popups
+          map.on('popupopen', (e: any) => {
+            const btn = e.popup._contentNode.querySelector('.map-filter-btn');
+            if (btn) {
+              btn.addEventListener('click', (ev: any) => {
+                const loc = ev.target.getAttribute('data-location');
+                if (loc && inputLocation) {
+                  inputLocation.value = loc;
+                  filterPosts();
+                  document.getElementById('results-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+              });
+            }
+          });
+        }
+
+        // Remove old markers
+        mapMarkers.forEach(m => map.removeLayer(m));
+        mapMarkers = [];
 
         areas.forEach((area: any) => {
           const htmlIcon = L.divIcon({
@@ -557,24 +524,15 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
           });
           
           marker.on('mouseover', function () { this.openPopup(); });
-        });
-        
-        // Handle clicks on the "Filter Area" buttons inside leaflet popups
-        map.on('popupopen', (e) => {
-          const btn = e.popup._contentNode.querySelector('.map-filter-btn');
-          if (btn) {
-            btn.addEventListener('click', (ev: any) => {
-              const loc = ev.target.getAttribute('data-location');
-              if (loc && inputLocation) {
-                inputLocation.value = loc;
-                filterPosts();
-                document.getElementById('results-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              }
-            });
-          }
+          mapMarkers.push(marker);
         });
 
         setTimeout(() => map.invalidateSize(), 500);
+      };
+
+      const initialDataScript = document.getElementById('map-data');
+      if (initialDataScript) {
+        window.initOrUpdateMap(JSON.parse(initialDataScript.textContent || '[]'));
       }
     });
   </script>

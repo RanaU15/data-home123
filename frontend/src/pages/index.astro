@@ -11,27 +11,54 @@ const from = (currentPage - 1) * pageSize;
 const to = from + pageSize - 1;
 
 // Fetch posts and total count from Supabase
-const { data: posts, error, count } = await supabase
-  .from('posts')
-  .select('*', { count: 'exact' })
-  .order('scraped_at', { ascending: false })
-  .range(from, to);
+import { filterPosts, normalizeQuery } from '../lib/filters';
+import { getAllPosts } from '../lib/data';
 
-const totalPosts = count || 0;
+const q = Astro.url.searchParams.get('q') || '';
+
+// Fetch all posts from the DB across all pages
+const allPosts = await getAllPosts();
+let validPosts = allPosts;
+
+if (q) {
+  const parsedFilters = normalizeQuery(q);
+  validPosts = filterPosts(validPosts, parsedFilters);
+}
+
+const totalPosts = validPosts.length;
 const totalPages = Math.max(1, Math.ceil(totalPosts / pageSize));
-const hasPosts = !error && posts && posts.length > 0;
+const posts = validPosts.slice(from, to + 1);
+
+const hasPosts = posts && posts.length > 0;
 ---
 
 <Layout title="Scraped Facebook Posts | Data Inspector">
-  <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-5">
-    <div>
-      <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Scraped Posts Feed</h1>
-      <p class="mt-1 text-sm text-slate-500">Browse and inspect all recently scraped Facebook group posts.</p>
-    </div>
-    <div class="flex items-center gap-2">
-      <span class="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-600/20 ring-inset">
-        {totalPosts} Posts Available
-      </span>
+  <div class="mb-8 border-b border-slate-200 pb-6">
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div class="relative w-full max-w-3xl">
+        <div class="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none">
+          <svg class="h-6 w-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+        <input 
+          type="text" 
+          id="global-search-input"
+          value={q}
+          class="w-full h-[56px] md:h-[60px] pl-14 pr-28 rounded-full border border-slate-200 bg-white shadow-[0_2px_10px_-3px_rgba(0,0,0,0.05)] text-slate-900 placeholder-slate-400 focus:border-slate-300 focus:ring-4 focus:ring-slate-100 focus:outline-none transition-all text-base md:text-lg"
+          placeholder="Search by location, property type..."
+        />
+        <div class="absolute inset-y-0 right-2 flex items-center">
+          <button id="global-search-btn" class="h-11 md:h-12 px-6 bg-slate-900 text-white font-semibold rounded-full hover:bg-slate-800 transition-colors shadow-sm text-sm md:text-base cursor-pointer">
+            Search
+          </button>
+        </div>
+      </div>
+      <div class="flex-shrink-0 mt-2 md:mt-0">
+        <span id="post-count-badge" class="inline-flex items-center rounded-full bg-white border border-slate-200 px-5 py-2.5 text-sm font-bold text-slate-800 shadow-sm" data-initial={totalPosts}>
+          {totalPosts.toLocaleString()} Posts
+        </span>
+      </div>
     </div>
   </div>
 
@@ -51,9 +78,11 @@ const hasPosts = !error && posts && posts.length > 0;
   <div id="posts-container">
     {hasPosts ? (
       <div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" id="results-grid">
           {posts.map((post: Post) => (
-            <PostCard post={post} />
+            <div class="post-wrapper h-full" data-body={[post.body, post.author, post.group_name, post.location, post.property_type, post.preferred_tenant, post.requirement, post.post_type].filter(Boolean).join(" ").toLowerCase()}>
+              <PostCard post={post} />
+            </div>
           ))}
         </div>
 
@@ -61,13 +90,13 @@ const hasPosts = !error && posts && posts.length > 0;
         <div class="mt-12 flex items-center justify-between border-t border-slate-200 pt-6">
           <div class="flex flex-1 items-center justify-between sm:hidden">
             <a 
-              href={currentPage > 1 ? `?page=${currentPage - 1}` : '#'} 
+              href={currentPage > 1 ? `?page=${currentPage - 1}${q ? '&q=' + encodeURIComponent(q) : ''}` : '#'} 
               class={`relative inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 ${currentPage <= 1 ? 'pointer-events-none opacity-50' : ''}`}
             >
               Previous
             </a>
             <a 
-              href={currentPage < totalPages ? `?page=${currentPage + 1}` : '#'} 
+              href={currentPage < totalPages ? `?page=${currentPage + 1}${q ? '&q=' + encodeURIComponent(q) : ''}` : '#'} 
               class={`relative ml-3 inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 ${currentPage >= totalPages ? 'pointer-events-none opacity-50' : ''}`}
             >
               Next
@@ -82,7 +111,7 @@ const hasPosts = !error && posts && posts.length > 0;
             <div>
               <nav class="inline-flex items-center gap-2" aria-label="Pagination">
                 <a 
-                  href={currentPage > 1 ? `?page=${currentPage - 1}` : '#'} 
+                  href={currentPage > 1 ? `?page=${currentPage - 1}${q ? '&q=' + encodeURIComponent(q) : ''}` : '#'} 
                   class={`inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors ${currentPage <= 1 ? 'pointer-events-none opacity-50' : ''}`}
                 >
                   <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -96,7 +125,7 @@ const hasPosts = !error && posts && posts.length > 0;
                 </span>
 
                 <a 
-                  href={currentPage < totalPages ? `?page=${currentPage + 1}` : '#'} 
+                  href={currentPage < totalPages ? `?page=${currentPage + 1}${q ? '&q=' + encodeURIComponent(q) : ''}` : '#'} 
                   class={`inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors ${currentPage >= totalPages ? 'pointer-events-none opacity-50' : ''}`}
                 >
                   <span>Next</span>
@@ -130,7 +159,8 @@ const hasPosts = !error && posts && posts.length > 0;
   </div>
 
   <script>
-    // Simulate loading state to demonstrate skeleton loaders requirement
+    import { normalizePost, type FilterState, filterPosts } from '../lib/filters';
+
     document.addEventListener("DOMContentLoaded", () => {
       const skeletonGrid = document.getElementById("skeleton-grid");
       const postsContainer = document.getElementById("posts-container");
@@ -142,6 +172,93 @@ const hasPosts = !error && posts && posts.length > 0;
           postsContainer.classList.remove("hidden");
           window.sessionStorage.setItem("initial_loaded", "true");
         }, 500);
+      }
+
+      const searchInput = document.getElementById("global-search-input") as HTMLInputElement;
+      const searchBtn = document.getElementById("global-search-btn");
+      const postWrappers = Array.from(document.querySelectorAll(".post-wrapper")) as HTMLElement[];
+      const badge = document.getElementById("post-count-badge");
+      
+      let debounceTimer: ReturnType<typeof setTimeout>;
+      const initialTotal = parseInt(badge?.getAttribute("data-initial") || "0", 10);
+
+
+
+      // Pre-normalize posts once
+      postWrappers.forEach((wrapper, idx) => {
+        const rawContent = wrapper.getAttribute("data-body") || "";
+        const s = normalizePost(rawContent);
+
+        wrapper.setAttribute("data-searchable", s);
+        wrapper.setAttribute("data-original-index", idx.toString());
+      });
+
+      async function performSearch() {
+        if (!searchInput) return;
+        
+        const rawQuery = searchInput.value || "";
+        const url = new URL(window.location.href);
+        if (rawQuery.trim()) {
+          url.searchParams.set('q', rawQuery.trim());
+          url.searchParams.set('page', '1');
+        } else {
+          url.searchParams.delete('q');
+          url.searchParams.set('page', '1');
+        }
+
+        // Show loading state
+        if (skeletonGrid && postsContainer) {
+          skeletonGrid.classList.remove("hidden");
+          postsContainer.classList.add("hidden");
+        }
+
+        try {
+          const response = await fetch(url.toString());
+          const html = await response.text();
+          
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          
+          const newGrid = doc.getElementById('results-grid');
+          const newPagination = doc.querySelector('nav[aria-label="Pagination"]')?.parentElement?.parentElement?.parentElement;
+          const newBadge = doc.getElementById('post-count-badge');
+          
+          const currentGrid = document.getElementById('results-grid');
+          if (currentGrid && newGrid) {
+            currentGrid.innerHTML = newGrid.innerHTML;
+          }
+
+          const currentPagination = document.querySelector('nav[aria-label="Pagination"]')?.parentElement?.parentElement?.parentElement;
+          if (currentPagination && newPagination) {
+            currentPagination.innerHTML = newPagination.innerHTML;
+          }
+
+          if (badge && newBadge) {
+            badge.textContent = newBadge.textContent;
+          }
+
+          window.history.pushState({}, '', url.toString());
+        } catch (e) {
+          console.error("Search failed", e);
+        } finally {
+          if (skeletonGrid && postsContainer) {
+            skeletonGrid.classList.add("hidden");
+            postsContainer.classList.remove("hidden");
+          }
+        }
+      }
+
+      function handleInput() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(performSearch, 300);
+      }
+
+      if (searchInput) {
+        searchInput.addEventListener("input", handleInput);
+      }
+      
+      if (searchBtn) {
+        searchBtn.addEventListener("click", performSearch);
       }
     });
   </script>

@@ -1,0 +1,139 @@
+export function extractNumbers(text: string): number[] {
+  const regex = /\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b|\b\d+\b/g;
+  const matches = text.match(regex);
+  if (!matches) return [];
+  return matches.map(m => parseInt(m.replace(/,/g, ''), 10)).filter(n => !isNaN(n));
+}
+
+export interface FilterState {
+  location?: string;
+  budget?: number | null;
+  propertyTypes?: string[];
+  preferredTenants?: string[];
+  requirements?: string[];
+  globalQuery?: string; // Keep this just in case, but we parse it out
+}
+
+export function normalizePost(text: string): string {
+  if (!text) return "";
+  return text.toLowerCase().trim();
+}
+
+// The exact logic from the Sidebar filters (search.astro)
+export function matchesPost(body: string, filters: FilterState): boolean {
+  if (!body) return false;
+  body = body.toLowerCase();
+
+  // --- 1. Location Filter ---
+  const locQuery = filters.location ? filters.location.toLowerCase().trim() : "";
+  const matchesLocation = !locQuery || body.includes(locQuery);
+
+  // --- 2. Budget Filter ---
+  let matchesBudget = true;
+  const budgetValue = filters.budget;
+  if (budgetValue !== undefined && budgetValue !== null && budgetValue > 0) {
+    const numbersInPost = extractNumbers(body);
+    // Assume valid rent/price numbers are at least 1000 (to filter out 2bhk, floor 3, etc)
+    const rentNumbers = numbersInPost.filter(n => n >= 1000);
+    if (rentNumbers.length > 0) {
+      matchesBudget = rentNumbers.some(n => n <= budgetValue);
+    } else {
+      // If no numbers > 1000 found, exclude if they strictly want a budget limit.
+      matchesBudget = false;
+    }
+  }
+
+  // --- 3. Property Type Filter ---
+  let matchesType = true;
+  const selectedTypes = filters.propertyTypes || [];
+  if (selectedTypes.length > 0) {
+    matchesType = selectedTypes.some(type => {
+      if (type === '1bhk') return body.includes('1bhk') || body.includes('1 bhk');
+      if (type === '2bhk') return body.includes('2bhk') || body.includes('2 bhk');
+      if (type === '3bhk') return body.includes('3bhk') || body.includes('3 bhk');
+      if (type === '4bhk') return body.includes('4bhk') || body.includes('4 bhk');
+      if (type === 'boyspg') return body.includes('boy pg') || body.includes('boys pg') || body.includes('boyspg') || body.includes('boy\'s pg');
+      if (type === 'girlspg') return body.includes('girl pg') || body.includes('girls pg') || body.includes('girlspg') || body.includes('girl\'s pg');
+      return false;
+    });
+  }
+
+  // --- 4. Tenant Filter ---
+  let matchesTenant = true;
+  const selectedTenants = filters.preferredTenants || [];
+  if (selectedTenants.length > 0) {
+    matchesTenant = selectedTenants.some(tenant => {
+      if (tenant === 'bacelor' || tenant === 'bachelors') return body.includes('bacelor') || body.includes('bachelor');
+      if (tenant === 'families' || tenant === 'family') return body.includes('families') || body.includes('family');
+      return false;
+    });
+  }
+
+  // --- 5. Requirement Filter ---
+  let matchesRequirement = true;
+  const selectedRequirements = filters.requirements || [];
+  if (selectedRequirements.length > 0) {
+    matchesRequirement = selectedRequirements.some(req => {
+      if (req === 'flat') return body.includes('looking for flat') || body.includes('looking for flate') || body.includes('need a flat') || body.includes('need flat') || body.includes('available for rent') || body.includes('rent') || body.includes('to let') || body.includes('flat available') || body.includes('flate available');
+      if (req === 'flatmate') return body.includes('looking for flatmate') || body.includes('looking for flatemate') || body.includes('looking for flatement') || body.includes('looking for flatemants') || body.includes('need flatmate') || body.includes('flatmate required') || body.includes('roommate') || body.includes('room partner') || body.includes('pg') || body.includes('sharing');
+      return false;
+    });
+  }
+
+  return matchesLocation && matchesBudget && matchesType && matchesTenant && matchesRequirement;
+}
+
+export function filterPosts(posts: any[], filters: FilterState): any[] {
+  return posts.filter(post => {
+    // combine all searchable text just like search.astro's data-body
+    const body = [post.body, post.author, post.group_name, post.location, post.property_type, post.preferred_tenant, post.requirement, post.post_type].filter(Boolean).join(" ").toLowerCase();
+    return matchesPost(body, filters);
+  });
+}
+
+// Parse natural language query into structured Sidebar filters
+export function normalizeQuery(query: string): FilterState {
+  if (!query) return {};
+  let s = query.toLowerCase();
+
+  const filters: FilterState = {
+    propertyTypes: [],
+    preferredTenants: [],
+    requirements: []
+  };
+
+  // Extract budget (e.g. "under 15000", "< 20000", or just "15000")
+  const budgetMatch = s.match(/(?:under|below|<)?\s*(\d{4,5})/);
+  if (budgetMatch) {
+    filters.budget = parseInt(budgetMatch[1], 10);
+    s = s.replace(budgetMatch[0], "");
+  }
+
+  // Extract property types
+  if (s.match(/1\s*bhk/)) { filters.propertyTypes!.push('1bhk'); s = s.replace(/1\s*bhk/, ""); }
+  if (s.match(/2\s*bhk/)) { filters.propertyTypes!.push('2bhk'); s = s.replace(/2\s*bhk/, ""); }
+  if (s.match(/3\s*bhk/)) { filters.propertyTypes!.push('3bhk'); s = s.replace(/3\s*bhk/, ""); }
+  if (s.match(/4\s*bhk/)) { filters.propertyTypes!.push('4bhk'); s = s.replace(/4\s*bhk/, ""); }
+  if (s.match(/boy[s]?\s*pg/)) { filters.propertyTypes!.push('boyspg'); s = s.replace(/boy[s]?\s*pg/, ""); }
+  if (s.match(/girl[s]?\s*pg/)) { filters.propertyTypes!.push('girlspg'); s = s.replace(/girl[s]?\s*pg/, ""); }
+
+  // Extract tenants
+  if (s.match(/bachelor/)) { filters.preferredTenants!.push('bachelors'); s = s.replace(/bachelor[s]?/, ""); }
+  if (s.match(/famil/)) { filters.preferredTenants!.push('families'); s = s.replace(/famil(?:y|ies)/, ""); }
+
+  // Extract requirements
+  if (s.match(/flatmate|roommate/)) { filters.requirements!.push('flatmate'); s = s.replace(/flatmate|roommate/, ""); }
+  else if (s.match(/flat/)) { filters.requirements!.push('flat'); s = s.replace(/flat/, ""); }
+
+  // Remove common stop words to isolate location
+  s = s.replace(/\b(?:in|at|near|for|the|a|an|to|of|on|with|and)\b/g, " ");
+  s = s.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()[\]'\"|]/g, " ");
+
+  // Whatever is left is considered the location or keyword
+  const locationStr = s.trim().replace(/\s{2,}/g, " ");
+  if (locationStr) {
+    filters.location = locationStr;
+  }
+
+  return filters;
+}
