@@ -2,6 +2,12 @@
 import Layout from '../layouts/Layout.astro';
 import PostCard from '../components/PostCard.astro';
 import SkeletonCard from '../components/SkeletonCard.astro';
+
+// Prevent browser/CDN caching
+Astro.response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+Astro.response.headers.set('Pragma', 'no-cache');
+Astro.response.headers.set('Expires', '0');
+
 import { supabase, type Post } from '../lib/supabase';
 
 // Pagination setup
@@ -18,8 +24,10 @@ import { performHybridSearch } from '../lib/hybridSearch';
 
 const q = Astro.url.searchParams.get('q') || '';
 
+const hasRefresh = Astro.url.searchParams.has('_t');
+
 // Fetch all posts from the DB across all pages
-const allPosts = await getAllPosts();
+const allPosts = await getAllPosts(hasRefresh);
 let validPosts = allPosts;
 
 if (q) {
@@ -36,10 +44,10 @@ const hasPosts = posts && posts.length > 0;
 
 <Layout title="Scraped Facebook Posts | Data Inspector">
   <div class="mb-8 border-b border-slate-200 pb-6">
-    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
-      <div class="relative w-full max-w-3xl">
-        <div class="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none">
-          <svg class="h-6 w-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-6 xl:gap-8">
+      <div class="relative w-full max-w-2xl">
+        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+          <svg class="h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
         </div>
@@ -47,17 +55,18 @@ const hasPosts = posts && posts.length > 0;
           type="text" 
           id="global-search-input"
           value={q}
-          class="w-full h-[56px] md:h-[60px] pl-14 pr-28 rounded-full border border-slate-200 bg-white shadow-[0_2px_10px_-3px_rgba(0,0,0,0.05)] text-slate-900 placeholder-slate-400 focus:border-slate-300 focus:ring-4 focus:ring-slate-100 focus:outline-none transition-all text-base md:text-lg"
+          class="w-full h-[48px] md:h-[52px] pl-11 pr-24 rounded-full border border-slate-200 bg-white shadow-[0_2px_10px_-3px_rgba(0,0,0,0.05)] text-slate-900 placeholder-slate-400 focus:border-slate-300 focus:ring-4 focus:ring-slate-100 focus:outline-none transition-all text-sm md:text-base"
           placeholder="Search by location, property type..."
         />
-        <div class="absolute inset-y-0 right-2 flex items-center">
-          <button id="global-search-btn" class="h-11 md:h-12 px-6 bg-slate-900 text-white font-semibold rounded-full hover:bg-slate-800 transition-colors shadow-sm text-sm md:text-base cursor-pointer">
+        <div class="absolute inset-y-0 right-1.5 flex items-center">
+          <button id="global-search-btn" class="h-9 md:h-10 px-5 bg-slate-900 text-white font-semibold rounded-full hover:bg-slate-800 transition-colors shadow-sm text-sm cursor-pointer">
             Search
           </button>
         </div>
       </div>
-      <div class="flex-shrink-0 mt-2 md:mt-0">
-        <span id="post-count-badge" class="inline-flex items-center rounded-full bg-white border border-slate-200 px-5 py-2.5 text-sm font-bold text-slate-800 shadow-sm" data-initial={totalPosts}>
+      <div class="flex-shrink-0 mt-2 xl:mt-0 flex flex-wrap items-center gap-4 xl:gap-6">
+        <span id="last-updated-indicator" class="text-sm font-medium text-slate-500 hidden"></span>
+        <span id="post-count-badge" class="inline-flex items-center rounded-full bg-white border border-slate-200 px-5 py-2 text-sm font-bold text-slate-800 shadow-sm" data-initial={totalPosts}>
           {totalPosts.toLocaleString()} Posts
         </span>
       </div>
@@ -195,54 +204,137 @@ const hasPosts = posts && posts.length > 0;
         wrapper.setAttribute("data-original-index", idx.toString());
       });
 
-      async function performSearch() {
+      // Status Polling and Auto-Refresh Logic
+      const lastUpdatedIndicator = document.getElementById("last-updated-indicator");
+      let currentLastSync: string | null = null;
+
+      function formatSyncTimes(lastSyncUtc: string, nextSyncUtc: string) {
+        const formatter = new Intl.DateTimeFormat("en-IN", {
+          timeZone: "Asia/Kolkata",
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true
+        });
+
+        const lastD = new Date(lastSyncUtc);
+        const nextD = new Date(nextSyncUtc);
+
+        const lastTime = isNaN(lastD.getTime()) ? "" : formatter.format(lastD);
+        const nextTime = isNaN(nextD.getTime()) ? "" : formatter.format(nextD);
+
+        // Check if today in IST
+        const todayIST = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata' }).format(new Date());
+        const targetIST = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata' }).format(lastD);
+
+        const datePrefix = todayIST === targetIST ? "Today" : new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric' }).format(lastD);
+        return `Updated ${datePrefix} ${lastTime} | Next Update ${nextTime}`;
+      }
+
+      async function checkSyncStatus() {
+        try {
+          const res = await fetch('/api/sync.json?_t=' + new Date().getTime(), { cache: 'no-store' });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.last_sync_utc && data.next_sync_utc) {
+              if (lastUpdatedIndicator) {
+                lastUpdatedIndicator.textContent = formatSyncTimes(data.last_sync_utc, data.next_sync_utc);
+                lastUpdatedIndicator.classList.remove("hidden");
+              }
+
+              if (currentLastSync && currentLastSync !== data.last_sync_utc) {
+                // Production server reached a new scheduled sync period
+                performSearch(true);
+              }
+              currentLastSync = data.last_sync_utc;
+            }
+          }
+        } catch (e) {
+          // ignore error
+        }
+      }
+
+      // Check immediately and then every 10 seconds
+      checkSyncStatus();
+      setInterval(checkSyncStatus, 10000);
+
+      async function performSearch(forceRefresh = false) {
         if (!searchInput) return;
         
         const rawQuery = searchInput.value || "";
         const url = new URL(window.location.href);
-        if (rawQuery.trim()) {
-          url.searchParams.set('q', rawQuery.trim());
-          url.searchParams.set('page', '1');
+        
+        if (!forceRefresh) {
+          if (rawQuery.trim()) {
+            url.searchParams.set('q', rawQuery.trim());
+            url.searchParams.set('page', '1');
+          } else {
+            url.searchParams.delete('q');
+            url.searchParams.set('page', '1');
+          }
         } else {
-          url.searchParams.delete('q');
-          url.searchParams.set('page', '1');
+          // Add cache-buster to ensure we get fresh HTML from server
+          url.searchParams.set('_t', new Date().getTime().toString());
         }
 
-        // Show loading state
-        if (skeletonGrid && postsContainer) {
+        // Show loading state ONLY if this is a user-initiated search (not background sync)
+        if (!forceRefresh && skeletonGrid && postsContainer) {
           skeletonGrid.classList.remove("hidden");
           postsContainer.classList.add("hidden");
         }
 
-        try {
-          const response = await fetch(url.toString());
-          const html = await response.text();
-          
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(html, 'text/html');
-          
-          const newGrid = doc.getElementById('results-grid');
-          const newPagination = doc.querySelector('nav[aria-label="Pagination"]')?.parentElement?.parentElement?.parentElement;
-          const newBadge = doc.getElementById('post-count-badge');
-          
-          const currentGrid = document.getElementById('results-grid');
-          if (currentGrid && newGrid) {
+        let retries = 3;
+        let html = "";
+        
+        for (let i = 0; i < retries; i++) {
+          try {
+            const response = await fetch(url.toString(), { cache: 'no-store' });
+            if (!response.ok) throw new Error("Status " + response.status);
+            html = await response.text();
+            break;
+          } catch (e) {
+            if (i === retries - 1) {
+              console.error("Failed to fetch fresh data after retries", e);
+              if (!forceRefresh && skeletonGrid && postsContainer) {
+                skeletonGrid.classList.add("hidden");
+                postsContainer.classList.remove("hidden");
+              }
+              return;
+            }
+            // Wait before retrying (exponential backoff)
+            await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+          }
+        }
+        
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        
+        const newGrid = doc.getElementById('results-grid');
+        const newPagination = doc.querySelector('nav[aria-label="Pagination"]')?.parentElement?.parentElement?.parentElement;
+        const newBadge = doc.getElementById('post-count-badge');
+        
+        const currentGrid = document.getElementById('results-grid');
+        if (currentGrid && newGrid) {
+          // Only update DOM if there are actual changes to avoid flickering
+          if (currentGrid.innerHTML !== newGrid.innerHTML) {
             currentGrid.innerHTML = newGrid.innerHTML;
           }
+        }
 
-          const currentPagination = document.querySelector('nav[aria-label="Pagination"]')?.parentElement?.parentElement?.parentElement;
-          if (currentPagination && newPagination) {
+        const currentPagination = document.querySelector('nav[aria-label="Pagination"]')?.parentElement?.parentElement?.parentElement;
+        if (currentPagination && newPagination) {
+          if (currentPagination.innerHTML !== newPagination.innerHTML) {
             currentPagination.innerHTML = newPagination.innerHTML;
           }
+        }
 
-          if (badge && newBadge) {
+        if (badge && newBadge) {
+          if (badge.textContent !== newBadge.textContent) {
             badge.textContent = newBadge.textContent;
           }
+        }
 
+        if (!forceRefresh) {
           window.history.pushState({}, '', url.toString());
-        } catch (e) {
-          console.error("Search failed", e);
-        } finally {
           if (skeletonGrid && postsContainer) {
             skeletonGrid.classList.add("hidden");
             postsContainer.classList.remove("hidden");
@@ -252,7 +344,7 @@ const hasPosts = posts && posts.length > 0;
 
       function handleInput() {
         clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(performSearch, 300);
+        debounceTimer = setTimeout(() => performSearch(false), 300);
       }
 
       if (searchInput) {
@@ -260,7 +352,7 @@ const hasPosts = posts && posts.length > 0;
       }
       
       if (searchBtn) {
-        searchBtn.addEventListener("click", performSearch);
+        searchBtn.addEventListener("click", () => performSearch(false));
       }
     });
   </script>

@@ -2,6 +2,12 @@
 import Layout from '../layouts/Layout.astro';
 import PostCard from '../components/PostCard.astro';
 import SkeletonCard from '../components/SkeletonCard.astro';
+
+// Prevent browser/CDN caching
+Astro.response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+Astro.response.headers.set('Pragma', 'no-cache');
+Astro.response.headers.set('Expires', '0');
+
 import { type Post } from '../lib/supabase';
 import { getAllPosts } from '../lib/data';
 import { filterPosts, type FilterState } from '../lib/filters';
@@ -14,6 +20,7 @@ const locationParam = Astro.url.searchParams.get('location') || '';
 const budgetParam = Astro.url.searchParams.get('budget');
 const propertyTypesParam = Astro.url.searchParams.getAll('propertyTypes[]');
 const preferredTenantsParam = Astro.url.searchParams.getAll('preferredTenants[]');
+const postedByParam = Astro.url.searchParams.getAll('postedBy[]');
 const requirementsParam = Astro.url.searchParams.getAll('requirements[]');
 
 const filters: FilterState = {
@@ -21,6 +28,7 @@ const filters: FilterState = {
   budget: budgetParam ? parseInt(budgetParam, 10) : null,
   propertyTypes: propertyTypesParam,
   preferredTenants: preferredTenantsParam,
+  postedBy: postedByParam,
   requirements: requirementsParam
 };
 
@@ -180,6 +188,21 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
             <label class="flex items-center gap-2 cursor-pointer group">
               <input type="checkbox" value="families" checked={filters.preferredTenants?.includes("families")} class="filter-tenant h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
               <span class="text-sm text-slate-700 group-hover:text-slate-900">Families</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Posted By Filter -->
+        <div class="mb-5">
+          <label class="block text-sm font-semibold text-slate-700 mb-3">Posted By</label>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="owner" checked={filters.postedBy?.includes("owner")} class="filter-posted-by h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">Owner</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="broker" checked={filters.postedBy?.includes("broker")} class="filter-posted-by h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">Broker</span>
             </label>
           </div>
         </div>
@@ -349,6 +372,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       
       const typeCheckboxes = Array.from(document.querySelectorAll(".filter-type")) as HTMLInputElement[];
       const tenantCheckboxes = Array.from(document.querySelectorAll(".filter-tenant")) as HTMLInputElement[];
+      const postedByCheckboxes = Array.from(document.querySelectorAll(".filter-posted-by")) as HTMLInputElement[];
       const requirementCheckboxes = Array.from(document.querySelectorAll(".filter-requirement")) as HTMLInputElement[];
       
       const resultsContainer = document.getElementById("results-container");
@@ -367,6 +391,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
         
         const selectedTypes = typeCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
         const selectedTenants = tenantCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
+        const selectedPostedBy = postedByCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
         const selectedRequirements = requirementCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
 
         const url = new URL(window.location.href);
@@ -384,6 +409,9 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
         url.searchParams.delete('preferredTenants[]');
         selectedTenants.forEach(t => url.searchParams.append('preferredTenants[]', t));
 
+        url.searchParams.delete('postedBy[]');
+        selectedPostedBy.forEach(t => url.searchParams.append('postedBy[]', t));
+
         url.searchParams.delete('requirements[]');
         selectedRequirements.forEach(t => url.searchParams.append('requirements[]', t));
 
@@ -395,10 +423,27 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
         if (filterTimeout) clearTimeout(filterTimeout);
 
         filterTimeout = setTimeout(async () => {
+          let retries = 3;
+          let html = "";
+          for (let i = 0; i < retries; i++) {
+            try {
+              const response = await fetch(url.toString(), { cache: 'no-store' });
+              if (!response.ok) throw new Error("Status " + response.status);
+              html = await response.text();
+              break;
+            } catch (e) {
+              if (i === retries - 1) {
+                console.error("Failed to fetch fresh data after retries", e);
+                searchSkeleton.classList.add("hidden");
+                const newResultsContainer = document.getElementById('results-container');
+                if (newResultsContainer) newResultsContainer.classList.remove("hidden");
+                return;
+              }
+              await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+            }
+          }
+          
           try {
-            const response = await fetch(url.toString());
-            const html = await response.text();
-            
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
             
@@ -407,13 +452,19 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
             const newNoResults = doc.getElementById('no-results-state');
             
             const currentGrid = document.getElementById('results-grid');
-            if (currentGrid && newGrid) currentGrid.innerHTML = newGrid.innerHTML;
+            if (currentGrid && newGrid) {
+              if (currentGrid.innerHTML !== newGrid.innerHTML) currentGrid.innerHTML = newGrid.innerHTML;
+            }
 
             const currentPagination = document.getElementById('pagination-wrapper');
-            if (currentPagination && newPagination) currentPagination.innerHTML = newPagination.innerHTML;
+            if (currentPagination && newPagination) {
+              if (currentPagination.innerHTML !== newPagination.innerHTML) currentPagination.innerHTML = newPagination.innerHTML;
+            }
 
             const currentNoResults = document.getElementById('no-results-state');
-            if (currentNoResults && newNoResults) currentNoResults.outerHTML = newNoResults.outerHTML;
+            if (currentNoResults && newNoResults) {
+              if (currentNoResults.outerHTML !== newNoResults.outerHTML) currentNoResults.outerHTML = newNoResults.outerHTML;
+            }
 
             const newMapData = doc.getElementById('map-data');
             if (newMapData) {
@@ -446,6 +497,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       
       typeCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
       tenantCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
+      postedByCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
       requirementCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
 
 
@@ -455,6 +507,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
         if (inputBudget) inputBudget.value = "";
         typeCheckboxes.forEach(cb => cb.checked = false);
         tenantCheckboxes.forEach(cb => cb.checked = false);
+        postedByCheckboxes.forEach(cb => cb.checked = false);
         requirementCheckboxes.forEach(cb => cb.checked = false);
         filterPosts();
       }
