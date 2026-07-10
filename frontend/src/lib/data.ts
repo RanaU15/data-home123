@@ -4,8 +4,8 @@ let cachedPosts: any[] | null = null;
 let lastFetchTime = 0;
 const CACHE_TTL = 1000 * 60 * 5; // 5 minutes cache
 
-export async function getAllPosts(forceRefresh: boolean = false) {
-  if (!forceRefresh && cachedPosts && Date.now() - lastFetchTime < CACHE_TTL) {
+export async function getAllPosts() {
+  if (cachedPosts && Date.now() - lastFetchTime < CACHE_TTL) {
     return cachedPosts;
   }
 

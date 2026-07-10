@@ -11,7 +11,6 @@ export interface FilterState {
   propertyTypes?: string[];
   preferredTenants?: string[];
   requirements?: string[];
-  postedBy?: string[];
   globalQuery?: string; // Keep this just in case, but we parse it out
 }
 
@@ -21,11 +20,9 @@ export function normalizePost(text: string): string {
 }
 
 // The exact logic from the Sidebar filters (search.astro)
-export function matchesPost(postObj: any, filters: FilterState, strictLocation: boolean = true): boolean {
-  if (!postObj) return false;
-  
-  // Combine all text for regular filtering
-  let body = [postObj.body, postObj.author, postObj.group_name, postObj.location, postObj.property_type, postObj.preferred_tenant, postObj.requirement, postObj.post_type].filter(Boolean).join(" ").toLowerCase();
+export function matchesPost(body: string, filters: FilterState, strictLocation: boolean = true): boolean {
+  if (!body) return false;
+  body = body.toLowerCase();
 
   // --- 1. Location Filter ---
   const locQuery = filters.location ? filters.location.toLowerCase().trim() : "";
@@ -83,31 +80,14 @@ export function matchesPost(postObj: any, filters: FilterState, strictLocation: 
     });
   }
 
-  // --- 6. Posted By Filter ---
-  let matchesPostedBy = true;
-  const selectedPostedBy = filters.postedBy || [];
-  if (selectedPostedBy.length > 0) {
-    // High confidence keywords for Owner vs Broker
-    const hasOwnerKeyword = body.match(/\b(no\s*brokerage|zero\s*brokerage|direct\s*owner|by\s*owner|i\s*am\s*owner)\b/i);
-    // Explicitly exclude "no brokerage" from triggering the broker keyword
-    const bodyWithoutNoBrokerage = body.replace(/\b(no\s*brokerage|zero\s*brokerage)\b/ig, '');
-    const hasBrokerKeyword = bodyWithoutNoBrokerage.match(/\b(brokerage|broker|consulting\s*fee|consultancy|agent|real\s*estate|15\s*days\s*rent|one\s*month\s*rent)\b/i);
-
-    const storedOwnerType = postObj.owner_type ? postObj.owner_type.toLowerCase() : null;
-
-    matchesPostedBy = selectedPostedBy.some(pb => {
-      if (pb === 'owner') return (storedOwnerType === 'owner' || (hasOwnerKeyword && !hasBrokerKeyword));
-      if (pb === 'broker') return (storedOwnerType === 'broker' || hasBrokerKeyword);
-      return false;
-    });
-  }
-
-  return matchesLocation && matchesBudget && matchesType && matchesTenant && matchesRequirement && matchesPostedBy;
+  return matchesLocation && matchesBudget && matchesType && matchesTenant && matchesRequirement;
 }
 
 export function filterPosts(posts: any[], filters: FilterState, strictLocation: boolean = true): any[] {
   return posts.filter(post => {
-    return matchesPost(post, filters, strictLocation);
+    // combine all searchable text just like search.astro's data-body
+    const body = [post.body, post.author, post.group_name, post.location, post.property_type, post.preferred_tenant, post.requirement, post.post_type].filter(Boolean).join(" ").toLowerCase();
+    return matchesPost(body, filters, strictLocation);
   });
 }
 
