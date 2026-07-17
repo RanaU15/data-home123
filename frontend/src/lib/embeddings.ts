@@ -1,17 +1,7 @@
-import { pipeline, env } from '@xenova/transformers';
-
-// Skip local model download for faster initial startup if needed, 
-// but by default Transformers.js will download the model to a local cache.
-env.allowLocalModels = true;
-env.useBrowserCache = false;
-
-let extractor: any = null;
+// import { pipeline, env } from '@xenova/transformers';
 
 export async function getEmbedding(text: string): Promise<number[]> {
-  if (!extractor) {
-    extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-  }
-  
-  const output = await extractor(text, { pooling: 'mean', normalize: true });
-  return Array.from(output.data);
+  console.warn("Local embeddings are disabled in Cloudflare Workers due to 'fs' module limitations.");
+  // For now, return an empty array or handle semantic search via a separate API
+  return [];
 }

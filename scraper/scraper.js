@@ -152,13 +152,13 @@ function cleanPermalink(url) {
         if (parsed.pathname.includes("/posts/") || parsed.pathname.includes("/permalink/")) {
             parsed.search = ""; // Strip search entirely for standard post permalinks
         }
-        
+
         const finalUrl = parsed.toString();
         // Reject group homepages
         if (finalUrl.match(/^https?:\/\/(www\.)?facebook\.com\/groups\/[^\/]+\/?$/) || finalUrl.match(/^https?:\/\/(www\.)?facebook\.com\/groups\/?$/)) {
             return null;
         }
-        
+
         return finalUrl;
     } catch (e) {
         return url;
@@ -222,7 +222,7 @@ function isTodayPost(timestamp) {
 // ===== VIDEO EXTRACTION IMPROVEMENT =====
 async function extractPlayableVideoUrl(context, permalink) {
     if (!permalink || !permalink.startsWith("http")) return [];
-    
+
     let videoPage = null;
     let extractedMp4 = null;
     let extractedHls = null;
@@ -231,21 +231,21 @@ async function extractPlayableVideoUrl(context, permalink) {
     try {
         console.log(`Opening permalink...`);
         videoPage = await context.newPage();
-        
+
         // 14. Prevent memory leaks: define listener and remove it later
         networkListener = (response) => {
             try {
                 const url = response.url();
-                
+
                 // 6. Listen to every network request for video URLs
-                if (url.includes('video.xx.fbcdn.net') || 
+                if (url.includes('video.xx.fbcdn.net') ||
                     url.includes('fbcdn.net/v/t') && (url.includes('.mp4') || url.includes('.m3u8')) ||
                     url.includes('.mp4') ||
                     url.includes('.m3u8') ||
                     url.includes('.mpd') ||
                     url.includes('video/mp4') ||
                     url.includes('application/vnd.apple.mpegurl')) {
-                    
+
                     if (url.includes('.m3u8') || url.includes('.mpd') || url.includes('apple.mpegurl')) {
                         console.log(`Network request captured`);
                         console.log(`Video response captured`);
@@ -258,43 +258,43 @@ async function extractPlayableVideoUrl(context, permalink) {
                         if (!extractedMp4) extractedMp4 = url;
                     }
                 }
-            } catch(e) {}
+            } catch (e) { }
         };
-        
+
         videoPage.on('response', networkListener);
-        
+
         // 1. Open the permalink
         // 2. Wait until the page is fully interactive
-        await videoPage.goto(permalink, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+        await videoPage.goto(permalink, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => { });
         console.log(`Waiting for player...`);
-        
+
         const startTime = Date.now();
         const maxWaitTime = 30000; // 10. Wait up to 30 seconds
         let attempt = 1;
-        
+
         // 9. Retry extraction multiple times
         while (Date.now() - startTime < maxWaitTime) {
             console.log(`attempt ${attempt}`);
-            
+
             if (extractedMp4 || extractedHls) {
                 break;
             }
-            
+
             // 3. Wait for a video element
             const playerSelectors = 'video, video[src], div[data-video-id], div[role="application"], video[playsinline]';
             const playerLocator = videoPage.locator(playerSelectors).first();
-            
-            if (await playerLocator.count().catch(()=>0) > 0) {
+
+            if (await playerLocator.count().catch(() => 0) > 0) {
                 console.log(`Player found`);
-                
+
                 // 4. Scroll the player into view
-                await playerLocator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(()=>{});
-                
+                await playerLocator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => { });
+
                 // 5. Simulate a real mouse click on the player
-                await playerLocator.click({ force: true, delay: 100, timeout: 2000 }).catch(()=>{});
+                await playerLocator.click({ force: true, delay: 100, timeout: 2000 }).catch(() => { });
                 console.log(`Player clicked`);
             }
-            
+
             // 7. Inspect the video element itself
             const domUrls = await videoPage.evaluate(() => {
                 let mp4 = null;
@@ -314,7 +314,7 @@ async function extractPlayableVideoUrl(context, permalink) {
                 }
                 return { mp4, hls };
             }).catch(() => ({ mp4: null, hls: null }));
-            
+
             if (domUrls.mp4 && !extractedMp4) {
                 console.log(`Video element src`);
                 extractedMp4 = domUrls.mp4;
@@ -322,7 +322,7 @@ async function extractPlayableVideoUrl(context, permalink) {
                 console.log(`Video element src`);
                 extractedHls = domUrls.hls;
             }
-            
+
             // 8. If the video URL is inside GraphQL JSON, extract it
             const graphqlUrls = await videoPage.evaluate(() => {
                 let hdUrl = null;
@@ -331,72 +331,72 @@ async function extractPlayableVideoUrl(context, permalink) {
                 for (const script of scripts) {
                     const text = script.innerText;
                     if (!text) continue;
-                    
+
                     const hdMatch = text.match(/"(?:playable_url_quality_hd|browser_native_hd_url)"\s*:\s*"([^"]+)"/);
                     if (hdMatch && hdMatch[1]) {
-                        try { hdUrl = JSON.parse(`"${hdMatch[1].replace(/\\/g, '\\\\')}"`).replace(/\\\//g, '/'); } 
-                        catch(e) { hdUrl = hdMatch[1].replace(/\\\//g, '/'); }
+                        try { hdUrl = JSON.parse(`"${hdMatch[1].replace(/\\/g, '\\\\')}"`).replace(/\\\//g, '/'); }
+                        catch (e) { hdUrl = hdMatch[1].replace(/\\\//g, '/'); }
                     }
-                    
+
                     const sdMatch = text.match(/"(?:playable_url|browser_native_sd_url)"\s*:\s*"([^"]+)"/);
                     if (sdMatch && sdMatch[1]) {
-                        try { sdUrl = JSON.parse(`"${sdMatch[1].replace(/\\/g, '\\\\')}"`).replace(/\\\//g, '/'); } 
-                        catch(e) { sdUrl = sdMatch[1].replace(/\\\//g, '/'); }
+                        try { sdUrl = JSON.parse(`"${sdMatch[1].replace(/\\/g, '\\\\')}"`).replace(/\\\//g, '/'); }
+                        catch (e) { sdUrl = sdMatch[1].replace(/\\\//g, '/'); }
                     }
-                    
+
                     if (hdUrl || sdUrl) break;
                 }
                 return { hd: hdUrl, sd: sdUrl };
             }).catch(() => ({ hd: null, sd: null }));
-            
+
             if (graphqlUrls.hd && !extractedMp4) {
                 console.log(`GraphQL video URL`);
-                extractedMp4 = graphqlUrls.hd; 
+                extractedMp4 = graphqlUrls.hd;
             } else if (graphqlUrls.sd && !extractedMp4 && !extractedHls) {
                 console.log(`GraphQL video URL`);
                 extractedMp4 = graphqlUrls.sd;
             }
-            
+
             if (extractedMp4 || extractedHls) {
                 break;
             }
-            
+
             // wait 2 sec
-            await videoPage.waitForTimeout(2000).catch(()=>{});
-            
+            await videoPage.waitForTimeout(2000).catch(() => { });
+
             // scroll
-            await videoPage.mouse.wheel(0, 300).catch(()=>{});
+            await videoPage.mouse.wheel(0, 300).catch(() => { });
             console.log(`scroll`);
             console.log(`click again`); // The next loop iteration will click again if player found
-            
+
             attempt++;
         }
-        
+
         // 11. Prefer MP4. If unavailable, save the HLS (.m3u8) URL.
         let finalUrl = null;
         if (extractedMp4) finalUrl = extractedMp4;
         else if (extractedHls) finalUrl = extractedHls;
-        
+
         if (finalUrl) {
             console.log(`Final extracted URL:\n${finalUrl}`);
             return [finalUrl];
         }
-        
+
         // 12. If no stream URL can be extracted, store the Reel permalink instead
         console.log(`No playable video URL found.`);
         console.log(`Reason for failure:\nCould not intercept or extract any valid MP4/HLS streams after 30 seconds.`);
         return [permalink];
-        
+
     } catch (err) {
         console.log(`Reason for failure:\n${err.message}`);
-        return [permalink]; 
+        return [permalink];
     } finally {
         // 14. Remove listeners after extraction
         if (videoPage) {
             if (networkListener) {
                 videoPage.off('response', networkListener);
             }
-            await videoPage.close().catch(() => {});
+            await videoPage.close().catch(() => { });
         }
     }
 }
@@ -446,19 +446,19 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
         await targetPage.reload({
             waitUntil: "domcontentloaded"
         });
-        
+
         try {
             const currentUrl = targetPage.url();
             const currentTitle = await targetPage.title();
             console.log(`Current URL: ${currentUrl}`);
             console.log(`Current Title: ${currentTitle}`);
-            
+
             await targetPage.screenshot({ path: `debug-${groupId}.png`, fullPage: true });
-            
+
             const html = await targetPage.content();
             const fs = require('fs');
             fs.writeFileSync(`debug-${groupId}.html`, html);
-            
+
             await Promise.race([
                 targetPage.waitForSelector('div[role="feed"]', { timeout: 30000 }),
                 targetPage.waitForSelector('[data-pagelet="GroupFeed"]', { timeout: 30000 })
@@ -470,7 +470,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             throw reloadErr; // Handled by outer retry loop
         }
     }
-    
+
     await targetPage.waitForTimeout(3000 + Math.random() * 2000); // Human-like delay
 
     let oldPostCount = 0;
@@ -494,7 +494,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
         if (count === 0) {
             feedUnits = targetPage.locator('[data-pagelet="GroupFeed"] > div > div');
             count = await feedUnits.count().catch(() => 0);
-            
+
             if (count === 0) {
                 feedUnits = targetPage.locator('div[data-testid="Keycommand_wrapper"]');
                 count = await feedUnits.count().catch(() => 0);
@@ -524,25 +524,25 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 return await unit.evaluate((el) => {
                     let bodyText = "";
                     let selectorMatched = false;
-                    
+
                     let textBlocks = Array.from(el.querySelectorAll('div[data-ad-comet-preview="message"], div[data-ad-preview="message"]'));
                     if (textBlocks.length === 0) {
                         const allAuto = Array.from(el.querySelectorAll('div[dir="auto"]'));
                         textBlocks = allAuto.filter(auto => !auto.parentElement || !auto.parentElement.closest('div[dir="auto"]'));
                     }
                     if (textBlocks.length > 0) selectorMatched = true;
-                    
+
                     const seenTexts = new Set();
                     let paragraphs = [];
-                    
+
                     for (const block of textBlocks) {
                         const txt = (block.innerText || "").trim();
                         if (!txt) continue;
-                        
+
                         if (/^(Like|Comment|Share|Send|Reply|Most Relevant|Write a comment|Suggested for you|Sponsored|See translation|Rate this translation|Most Recent|New Activity)$/i.test(txt)) {
                             break;
                         }
-                        
+
                         if (/^(See less|See more|Continue reading|\.\.\. More|… More)$/i.test(txt)) {
                             continue;
                         }
@@ -552,9 +552,9 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                             paragraphs.push(txt);
                         }
                     }
-                    
+
                     bodyText = paragraphs.join('\n');
-                    
+
                     const cleanUpRe = /(?:\s+|^)(?:See more|See less|… More|\.\.\. More|\.\.\. See more|Continue reading|See translation|Rate this translation|Like|Comment|Share|Send|Reply|Most Relevant|Most Recent|New Activity|Suggested for you|Sponsored|Write a comment)\s*$/gim;
                     let oldText;
                     do {
@@ -570,24 +570,24 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 return await page.evaluate(() => {
                     let bodyText = "";
                     const container = document.querySelector('div[role="main"]') || document.querySelector('article') || document.body;
-                    
+
                     let textBlocks = Array.from(container.querySelectorAll('div[data-ad-comet-preview="message"], div[data-ad-preview="message"]'));
                     if (textBlocks.length === 0) {
                         const allAuto = Array.from(container.querySelectorAll('div[dir="auto"]'));
                         textBlocks = allAuto.filter(auto => !auto.parentElement || !auto.parentElement.closest('div[dir="auto"]'));
                     }
-                    
+
                     const seenTexts = new Set();
                     let paragraphs = [];
-                    
+
                     for (const block of textBlocks) {
                         const txt = (block.innerText || "").trim();
                         if (!txt) continue;
-                        
+
                         if (/^(Like|Comment|Share|Send|Reply|Most Relevant|Write a comment|Suggested for you|Sponsored|See translation|Rate this translation|Most Recent|New Activity)$/i.test(txt)) {
                             break;
                         }
-                        
+
                         if (/^(See less|See more|Continue reading|\.\.\. More|… More)$/i.test(txt)) {
                             continue;
                         }
@@ -597,9 +597,9 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                             paragraphs.push(txt);
                         }
                     }
-                    
+
                     bodyText = paragraphs.join('\n');
-                    
+
                     const cleanUpRe = /(?:\s+|^)(?:See more|See less|… More|\.\.\. More|\.\.\. See more|Continue reading|See translation|Rate this translation|Like|Comment|Share|Send|Reply|Most Relevant|Most Recent|New Activity|Suggested for you|Sponsored|Write a comment)\s*$/gim;
                     let oldText;
                     do {
@@ -646,7 +646,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                             }
                         }
                     }
-                } catch (e) {}
+                } catch (e) { }
             };
 
             targetPage.on('response', responseListener);
@@ -662,15 +662,15 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
             console.log("\n----------------------------------------");
             console.log("Found feed card\n");
-            
+
             let { bodyText: previewBody, selectorMatched } = await extractFeedBody(feedUnit);
-            
+
             let method1Success = false;
             let method2Success = false;
             let method3Success = false;
             let method4Success = false;
             let finalSource = "None";
-            
+
             if (selectorMatched && previewBody.length > 0) {
                 method1Success = true;
                 finalSource = "Primary Selector";
@@ -678,13 +678,13 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
             let finalBody = previewBody;
             let expandedBody = previewBody;
-            let feedTruncatedInit = previewBody.endsWith("...") || 
-                                previewBody.endsWith("…") || 
-                                previewBody.match(/\.\.\.\s*$/) || 
-                                previewBody.match(/…\s*$/) ||
-                                previewBody.includes("See more") ||
-                                previewBody.includes("Continue reading") ||
-                                (previewBody.length > 50 && !previewBody.match(/[.!?]$/) && previewBody.length < 250);
+            let feedTruncatedInit = previewBody.endsWith("...") ||
+                previewBody.endsWith("…") ||
+                previewBody.match(/\.\.\.\s*$/) ||
+                previewBody.match(/…\s*$/) ||
+                previewBody.includes("See more") ||
+                previewBody.includes("Continue reading") ||
+                (previewBody.length > 50 && !previewBody.match(/[.!?]$/) && previewBody.length < 250);
 
             if (feedTruncatedInit) {
                 let clickSuccess = await feedUnit.evaluate(async (el) => {
@@ -698,7 +698,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                                 try {
                                     c.click();
                                     clicked = true;
-                                } catch(e) {}
+                                } catch (e) { }
                             }
                         }
                     }
@@ -707,7 +707,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                             let observerTriggered = false;
                             const observer = new MutationObserver(() => { observerTriggered = true; });
                             observer.observe(el, { childList: true, subtree: true, characterData: true });
-                            
+
                             let timePassed = 0;
                             const interval = setInterval(() => {
                                 timePassed += 100;
@@ -721,12 +721,12 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     }
                     return false;
                 }).catch(() => false);
-                
+
                 if (clickSuccess) {
                     await targetPage.waitForTimeout(500);
                     const extracted = await extractFeedBody(feedUnit);
                     expandedBody = extracted.bodyText;
-                    
+
                     if (expandedBody.length > previewBody.length) {
                         finalBody = expandedBody;
                     }
@@ -743,7 +743,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
                     // 1. Gather all anchors in the feed card
                     const anchors = Array.from(el.querySelectorAll('a[href]'));
-                    
+
                     let urls = anchors.map(a => {
                         let href = a.getAttribute("href") || "";
                         let rawHref = href;
@@ -752,12 +752,12 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                             const childAria = a.querySelector('[aria-label]');
                             if (childAria) ariaLabel = childAria.getAttribute("aria-label") || "";
                         }
-                        
+
                         // Normalize relative URLs to absolute
                         if (href.startsWith('/')) {
                             href = 'https://www.facebook.com' + href;
                         }
-                        
+
                         // Clean tracking parameters
                         try {
                             const parsed = new URL(href, 'https://www.facebook.com');
@@ -768,10 +768,10 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                             parsed.searchParams.delete('refsrc');
                             parsed.searchParams.delete('refid');
                             href = parsed.toString();
-                        } catch (e) {}
-                        
-                        return { 
-                            href, 
+                        } catch (e) { }
+
+                        return {
+                            href,
                             rawHref,
                             element: a,
                             ariaLabel,
@@ -850,7 +850,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                             break;
                         }
                     }
-                    
+
                     let author_avatar = null;
                     const avatarImg = el.querySelector('image[preserveAspectRatio="xMidYMid slice"]') || el.querySelector('img[src*="s60x60"], img[src*="s100x100"]');
                     if (avatarImg) author_avatar = avatarImg.getAttribute('href') || avatarImg.getAttribute('src');
@@ -863,8 +863,8 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                         const txt = (item.innerText || "").trim();
                         if (aria.includes("react") || aria.includes("Like") || aria.includes("superstar")) {
                             const match = aria.match(/\d+/);
-                            if (match) { 
-                                likes = Number(match[0]); 
+                            if (match) {
+                                likes = Number(match[0]);
                                 // Parse breakdown: "120 Like, 40 Love, 5 Care"
                                 const breakdownMatches = aria.matchAll(/(\d+)\s+([A-Za-z]+)/g);
                                 for (const bm of breakdownMatches) {
@@ -874,7 +874,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                                         reaction_breakdown[type] = count;
                                     }
                                 }
-                                if (likes > 0) break; 
+                                if (likes > 0) break;
                             }
                         }
                         if (txt.length > 0 && txt.length < 10 && /^\d+$/.test(txt)) {
@@ -901,7 +901,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     let rawVideoEls = Array.from(el.querySelectorAll('video'));
                     let dataVideoIdEls = Array.from(el.querySelectorAll('[data-video-id]'));
                     let dataStoreVideoEls = Array.from(el.querySelectorAll('[data-store*="video"]'));
-                    
+
                     let diagnosticInfo = {
                         videoElementsCount: rawVideoEls.length,
                         dataVideoIdCount: dataVideoIdEls.length,
@@ -913,7 +913,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     let video_urls = videoEls.map(v => v.getAttribute('src') || v.getAttribute('data-video-id')).filter(Boolean);
                     const has_video = video_urls.length > 0;
                     const video_count = video_urls.length;
-                    
+
                     let video_extraction_method = "None";
                     if (has_video) {
                         if (el.querySelector('video[src]')) video_extraction_method = "DOM src";
@@ -933,15 +933,15 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
                         if (!video_thumbnail) {
                             const possibleThumbnails = el.querySelectorAll('img');
-                            for(let t of possibleThumbnails) {
+                            for (let t of possibleThumbnails) {
                                 const src = t.getAttribute('src');
                                 if (!src || !src.startsWith('http') || src.includes('rsrc.php') || src.includes('emoji') || src.includes('avatar') || src.includes('sticker') || src.includes('reaction') || src.includes('fb_icon')) continue;
-                                
+
                                 const w = t.getAttribute('width');
                                 const h = t.getAttribute('height');
                                 if ((w && parseInt(w) < 150) || (h && parseInt(h) < 150)) continue;
-                                
-                                if(src.includes('fbcdn.net')) {
+
+                                if (src.includes('fbcdn.net')) {
                                     video_thumbnail = src;
                                     break;
                                 }
@@ -963,7 +963,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                         }
                     }
                     const images = Array.from(imageSet);
-                    
+
                     let post_type = "text";
                     if (has_video && images.length > 0) post_type = "mixed";
                     else if (has_video && video_count > 1) post_type = "multiple_videos";
@@ -974,9 +974,9 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     // Support backwards compatibility for video field
                     const video = has_video ? video_urls[0] : "None";
 
-                    return { 
-                        permalinkObj, bodyText, author, author_profile_url, author_avatar, 
-                        likes, comments, shares, video, video_urls, video_thumbnail, 
+                    return {
+                        permalinkObj, bodyText, author, author_profile_url, author_avatar,
+                        likes, comments, shares, video, video_urls, video_thumbnail,
                         video_duration, video_count, has_video, video_extraction_method, images, post_type,
                         reaction_breakdown, comments_disabled, diagnosticInfo
                     };
@@ -993,7 +993,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 cleanupNetworkListener();
                 continue;
             }
-            
+
             if (data.has_video) {
                 console.log("Video detected");
                 if (data.video_extraction_method) {
@@ -1002,7 +1002,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             } else {
                 console.log("No video detected");
             }
-            
+
             // Hover logic moved down below permalink fallbacks
             // -------------------------------------
 
@@ -1030,16 +1030,16 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                         return "";
                     });
                     await tempPage.close();
-                    
+
                     if (permalinkBody && permalinkBody.length > 0) {
                         method4Success = true;
                         finalSource = "Permalink";
                         finalBody = permalinkBody;
                         data.bodyText = finalBody;
                     }
-                } catch (e) {}
+                } catch (e) { }
             }
-            
+
             let imagesCount = data.images ? data.images.length : 0;
             let videosCount = (data.video_urls ? data.video_urls.length : 0) || (data.has_video ? 1 : 0);
             let skipped = false;
@@ -1104,7 +1104,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 try {
                     const parsed = new URL(data.images[0]);
                     stableImgInitial = path.basename(parsed.pathname);
-                } catch(e) {}
+                } catch (e) { }
             }
 
             let tempTemporaryId = crypto.createHash('sha256').update(groupId + normAuthorInitial + normBodyInitial + stableImgInitial).digest('hex');
@@ -1155,17 +1155,17 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 try {
                     const tempPage = await context.newPage();
                     await tempPage.goto(rawPermalink, { waitUntil: "domcontentloaded", timeout: 15000 });
-                    
+
                     const canonicalUrl = await tempPage.evaluate(() => {
                         const ogUrl = document.querySelector('meta[property="og:url"]');
                         if (ogUrl && ogUrl.content) return ogUrl.content;
-                        
+
                         const linkCanonical = document.querySelector('link[rel="canonical"]');
                         if (linkCanonical && linkCanonical.href) return linkCanonical.href;
-                        
+
                         return null;
                     });
-                    
+
                     if (canonicalUrl && !canonicalUrl.includes('photo.php') && !canonicalUrl.includes('photo/?')) {
                         rawPermalink = canonicalUrl;
                         urlType = "CANONICAL_META";
@@ -1184,14 +1184,14 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
             // --- STAGE 2 FALLBACK (CRITICAL) ---
             let needsFallback = false;
-            
+
             if (finalBody.endsWith("...")) needsFallback = true;
             if (finalBody.endsWith("…")) needsFallback = true;
             if (finalBody.includes("See more")) needsFallback = true;
             if (finalBody.includes("Continue reading")) needsFallback = true;
             if (finalBody.length < 50 && finalBody.endsWith("…")) needsFallback = true;
             if (feedTruncatedInit && finalBody.length <= previewBody.length) needsFallback = true;
-            
+
             let permalinkBodyText = "";
             let expansionSource = "Feed";
             let reason = "Already complete";
@@ -1201,26 +1201,26 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
             } else if (feedTruncatedInit && finalBody.length > previewBody.length) {
                 reason = "Expanded";
             }
-            
+
             if (needsFallback && permalink && permalink.startsWith("http")) {
                 try {
                     const fallbackPage = await context.newPage();
-                    await fallbackPage.goto(permalink, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-                    await fallbackPage.waitForTimeout(3000).catch(() => {});
-                    
+                    await fallbackPage.goto(permalink, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => { });
+                    await fallbackPage.waitForTimeout(3000).catch(() => { });
+
                     permalinkBodyText = await extractPermalinkBody(fallbackPage);
-                    
+
                     if (permalinkBodyText && permalinkBodyText.length > finalBody.length) {
                         finalBody = permalinkBodyText;
                         expansionSource = "Permalink";
                         reason = "Fallback";
                     }
-                    
-                    await fallbackPage.close().catch(() => {});
+
+                    await fallbackPage.close().catch(() => { });
                 } catch (e) {
                 }
             }
-            
+
             data.bodyText = finalBody;
 
             console.log(`Feed preview length: ${previewBody.length}`);
@@ -1260,7 +1260,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 try {
                     const parsed = new URL(data.images[0]);
                     stableFinalImg = path.basename(parsed.pathname);
-                } catch(e) {}
+                } catch (e) { }
             }
 
             temporaryId = crypto.createHash('sha256').update(groupId + normalizedAuthor + normalizedBodyText + stableFinalImg).digest('hex');
@@ -1277,33 +1277,33 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
             let hasPerm = facebookPostId ? existingFacebookPostIds.has(facebookPostId) : false;
             let hasTemp = existingTemporaryIds.has(temporaryId);
-            
+
             let duplicateReason = "";
 
             // Perform definitive Supabase duplicate check as single source of truth if not in memory set
             if (facebookPostId && !hasPerm) {
                 hasPerm = await checkDuplicateInSupabase(groupId, facebookPostId, null, null);
                 if (hasPerm) existingFacebookPostIds.add(facebookPostId);
-            } 
-            
+            }
+
             let hasUrlDup = false;
             if (!hasPerm && permalink && permalink.startsWith("http")) {
                 hasUrlDup = await checkDuplicateInSupabase(groupId, null, permalink, null);
             }
-            
+
             if (!hasPerm && !hasUrlDup && !hasTemp) {
                 hasTemp = await checkDuplicateInSupabase(groupId, null, null, temporaryId);
                 if (hasTemp) existingTemporaryIds.add(temporaryId);
             }
 
             const isDuplicate = hasPerm || hasUrlDup || hasTemp;
-            
+
             if (hasPerm) duplicateReason = "facebook_post_id";
             else if (hasUrlDup) duplicateReason = "original_post_url";
             else if (hasTemp) duplicateReason = "temporary_id";
-            
+
             const isUpdateCase = facebookPostId && !existingFacebookPostIds.has(facebookPostId) && existingTemporaryIds.has(temporaryId);
-            
+
             const decision = isUpdateCase ? "UPDATE" : (isDuplicate ? "SKIP" : "INSERT");
 
             console.log("\n========== POST VALIDATION ==========");
@@ -1324,7 +1324,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 if (isDuplicate || isOldPost || isUpdateCase) {
                     console.log("Checking database...");
                     existingDbRow = await getPostStatusInSupabase(groupId, facebookPostId, temporaryId);
-                    
+
                     if (existingDbRow) {
                         const dbVideos = existingDbRow.video_urls || [];
                         if (dbVideos.length === 0 || dbVideos[0] === "None") {
@@ -1364,14 +1364,14 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                             if (!facebookPostId) facebookPostId = normalizeFacebookPostId(permalink);
                         }
                         await tempPage.close();
-                    } catch (e) {}
+                    } catch (e) { }
                 }
-                
+
                 extractedVideoUrls = await extractPlayableVideoUrl(context, permalink);
                 if (extractedVideoUrls.length > 0) {
                     data.video_urls = extractedVideoUrls;
                     data.video_extraction_method = "Permalink";
-                    
+
                     if (existingDbRow) {
                         console.log("Updating existing database...");
                         const { supabase } = require('./supabase');
@@ -1408,7 +1408,7 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     cleanupNetworkListener();
                     break;
                 }
-                
+
                 cleanupNetworkListener();
                 continue;
             } else {
@@ -1495,11 +1495,11 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     console.log(`Video detected: YES, but no valid permalink found.`);
                 }
             }
-            
+
             // Only image thumbnails are uploaded in Phase 1 now. Video extraction handles thumbnails in Phase 2 if needed.
-            
+
             cleanupNetworkListener();
-            
+
             console.log("\n=== PHASE 1 (FEED SCAN) COMPLETE ===");
             console.log(`Timestamps:`);
             console.log(`- Card processing start: ${diagnosticLogs.cardProcessingStart}`);
@@ -1523,8 +1523,8 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                 let cleaned = lines.join('\n');
 
                 const garbageList = [
-                    "See less", "See more", "Continue reading", "Like", "Comment", "Reply", 
-                    "Share", "Send", "Most Relevant", "Most recent", "View more comments", 
+                    "See less", "See more", "Continue reading", "Like", "Comment", "Reply",
+                    "Share", "Send", "Most Relevant", "Most recent", "View more comments",
                     "Write a comment", "Sponsored", "Suggested for you", "New activity", "See translation"
                 ];
                 let groupNamePattern = "";
@@ -1540,13 +1540,13 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
                     cleaned = cleaned.replace(cleanupRegex, "").trim();
                     cleaned = cleaned.replace(cleanupRegexStart, "").trim();
                 }
-                
+
                 if (cleaned.length > 30 && !cleaned.includes(" ") && !cleaned.startsWith("http")) return "";
                 return cleaned;
             };
-            
+
             data.bodyText = cleanFacebookBody(data.bodyText || "");
-            
+
 
 
             const postObj = {
@@ -1687,11 +1687,11 @@ async function runOnceScrape() {
             console.log("Checking browser state...");
             // AUTH REFACTOR: Delegate authentication check and browser recovery completely to auth.js
             await auth.ensureLoggedIn();
-            
+
             // Re-sync local globals with the managed persistent profile
             context = auth.getContext();
             page = auth.getPage();
-            
+
             console.log("Session verified.");
 
             // [DEBUG LOG ADDED]: Log before scanning groups
@@ -1805,7 +1805,8 @@ async function runOnceScrape() {
         updateHealthStatus({
             running: false,
             runtime_seconds: runtimeSec,
-            next_run: nextRunTime.toISOString()
+            next_run: nextRunTime.toISOString(),
+            last_sync: new Date().toISOString()
         });
 
         isScraping = false;

@@ -2,7 +2,7 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, '../.env') });
 const { createClient } = require("@supabase/supabase-js");
 const fs = require("fs");
-const fs = require("fs");
+
 let pipeline = null;
 let extractor = null;
 try {
@@ -36,6 +36,18 @@ function normalizeFacebookPostId(url) {
         if (parsed.searchParams.has("multi_permalinks")) {
             return parsed.searchParams.get("multi_permalinks");
         }
+        
+        // For photo posts in groups, the actual post ID is in the 'set' param as gm.<id> or pcb.<id>
+        if (parsed.searchParams.has("set")) {
+            const setParam = parsed.searchParams.get("set");
+            if (setParam.startsWith('gm.')) {
+                return setParam.replace('gm.', '');
+            }
+            if (setParam.startsWith('pcb.')) {
+                return setParam.replace('pcb.', '');
+            }
+        }
+        
         if (parsed.searchParams.has("story_fbid")) {
             return parsed.searchParams.get("story_fbid");
         }

@@ -1,22 +1,12 @@
 import { defineConfig } from 'astro/config';
 import tailwindcss from '@tailwindcss/vite';
-
-const isDev = process.env.npm_lifecycle_event === 'dev';
-
-let adapter;
-if (!isDev) {
-  const mod = await import('@astrojs/cloudflare');
-  adapter = mod.default();
-} else {
-  const mod = await import('@astrojs/node');
-  adapter = mod.default({ mode: 'standalone' });
-}
+import cloudflare from '@astrojs/cloudflare';
 
 // https://astro.build/config
 export default defineConfig({
   output: 'server',
-  adapter: adapter,
+  adapter: cloudflare(),
   vite: {
     plugins: [tailwindcss()]
   }
-});
+});
