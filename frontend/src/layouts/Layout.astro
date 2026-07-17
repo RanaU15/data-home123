@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import { getUser } from '../lib/auth';
 
 interface Props {
   title?: string;
@@ -10,6 +11,8 @@ const {
   title = "Scraped Facebook Posts | Data Inspector", 
   description = "Browse and inspect scraped Facebook group posts stored in Supabase with a clean, modern interface." 
 } = Astro.props;
+
+const { user } = await getUser(Astro);
 ---
 
 <!doctype html>
@@ -44,6 +47,9 @@ const {
 						<span class="hidden sm:inline">Search & Filter</span>
 						<span class="sm:hidden">Search</span>
 					</a>
+          {user && (
+            <a href="/logout" class="font-medium text-slate-600 text-sm hover:text-blue-600 transition-colors">Logout</a>
+          )}
 				</nav>
 			</div>
 		</header>
