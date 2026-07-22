@@ -1,0 +1,213 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getUser } from '../lib/auth';
+import { createSupabaseServerClient } from '../lib/supabase';
+import type { Post } from '../lib/supabase';
+
+const { user } = await getUser(Astro);
+if (!user) {
+  return Astro.redirect('/login');
+}
+
+const supabase = createSupabaseServerClient(Astro);
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = formData.get('action');
+  const notificationId = formData.get('notification_id');
+
+  if (action === 'mark_read' && notificationId) {
+    await supabase.from('notifications').update({ is_read: true }).eq('id', notificationId).eq('user_id', user.id);
+  } else if (action === 'delete' && notificationId) {
+    await supabase.from('notifications').delete().eq('id', notificationId).eq('user_id', user.id);
+  } else if (action === 'mark_all_read') {
+    await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
+  }
+
+  return Astro.redirect('/notifications');
+}
+
+const { data: notifications, error } = await supabase
+  .from('notifications')
+  .select('*, alerts(name), posts(*)')
+  .eq('user_id', user.id)
+  .order('created_at', { ascending: false })
+  .limit(50);
+
+function formatDate(dateStr: string) {
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true });
+  } catch(e) {
+    return dateStr;
+  }
+}
+---
+
+<Layout title="Notifications | Data Inspector">
+  <div class="max-w-4xl mx-auto">
+    <div class="flex items-center justify-between mb-8">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">Notifications</h1>
+        <p class="text-slate-500 text-sm mt-1">Alerts triggered by new Facebook posts.</p>
+      </div>
+      {notifications && notifications.some(n => !n.is_read) && (
+        <form method="POST">
+          <input type="hidden" name="action" value="mark_all_read" />
+          <button type="submit" class="text-sm font-semibold text-blue-600 hover:text-blue-500 transition-colors">
+            Mark all as read
+          </button>
+        </form>
+      )}
+    </div>
+
+    {error && (
+      <div class="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg mb-6 text-sm">
+        Failed to load notifications: {error.message}
+      </div>
+    )}
+
+    {!notifications || notifications.length === 0 ? (
+      <div class="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-sm">
+        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-50 text-slate-400 mb-4">
+          <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+          </svg>
+        </div>
+        <h3 class="text-lg font-semibold text-slate-900">No notifications</h3>
+        <p class="text-sm text-slate-500 mt-1">You're all caught up. New matches will appear here.</p>
+      </div>
+    ) : (
+      <div id="notifications-container" class="space-y-4">
+        {notifications.map((notification) => {
+          const post = notification.posts as Post;
+          const isUnread = !notification.is_read;
+          return (
+            <div class={`rounded-xl border p-5 transition-colors ${isUnread ? 'bg-blue-50/50 border-blue-200 shadow-sm' : 'bg-white border-slate-200 shadow-sm hover:shadow-md'}`}>
+              <div class="flex items-start justify-between gap-4">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-2">
+                    {isUnread && <span class="h-2.5 w-2.5 rounded-full bg-blue-600 flex-shrink-0"></span>}
+                    <span class="text-xs font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md">
+                      Alert: {notification.alerts?.name || 'Deleted Alert'}
+                    </span>
+                    <span class="text-xs text-slate-500">
+                      {formatDate(notification.created_at)}
+                    </span>
+                  </div>
+                  
+                  <div class="text-sm text-slate-600 mb-3">
+                    <span class="font-medium text-slate-800">Match Reason:</span> {notification.matched_text}
+                  </div>
+
+                  {post ? (
+                    <div class="bg-white rounded-lg border border-slate-100 p-4 shadow-sm">
+                      <div class="flex items-center gap-3 mb-3">
+                        {post.author_avatar ? (
+                          <img src={post.author_avatar} alt={post.author || 'Author'} class="h-8 w-8 rounded-full object-cover border border-slate-200" />
+                        ) : (
+                          <div class="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 font-bold text-sm">
+                            {post.author ? post.author.charAt(0) : '?'}
+                          </div>
+                        )}
+                        <div>
+                          <div class="font-medium text-slate-900 text-sm">{post.author || 'Unknown Author'}</div>
+                          <div class="text-xs text-slate-500">{post.group_name || 'Facebook Group'}</div>
+                        </div>
+                      </div>
+                      <p class="text-sm text-slate-700 line-clamp-3 mb-3 whitespace-pre-wrap">{post.body}</p>
+                      <div class="flex items-center gap-4 text-xs font-medium">
+                        {post.post_url ? (
+                          <a href={post.post_url} target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 transition-colors inline-flex items-center gap-1">
+                            View on Facebook
+                            <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                          </a>
+                        ) : (
+                          <span class="text-slate-400">No Link Available</span>
+                        )}
+                        {post.id && (
+                          <a href={`/?q=${encodeURIComponent(post.id)}`} class="text-slate-600 hover:text-slate-900 transition-colors">
+                            Find in Dashboard
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div class="bg-slate-50 rounded-lg p-4 border border-slate-100 text-sm text-slate-500 italic">
+                      Post data is no longer available.
+                    </div>
+                  )}
+                </div>
+
+                <div class="flex flex-col gap-2 flex-shrink-0">
+                  {isUnread && (
+                    <form method="POST">
+                      <input type="hidden" name="action" value="mark_read" />
+                      <input type="hidden" name="notification_id" value={notification.id} />
+                      <button type="submit" class="text-xs font-medium text-slate-600 hover:text-blue-600 transition-colors w-full text-right">
+                        Mark Read
+                      </button>
+                    </form>
+                  )}
+                  <form method="POST">
+                    <input type="hidden" name="action" value="delete" />
+                    <input type="hidden" name="notification_id" value={notification.id} />
+                    <button type="submit" class="text-xs font-medium text-slate-400 hover:text-red-600 transition-colors w-full text-right">
+                      Delete
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    )}
+  </div>
+</Layout>
+
+<script>
+  import { supabase } from '../lib/supabase';
+  
+  const body = document.body;
+  const userId = body.getAttribute('data-user-id');
+  
+  if (userId) {
+    supabase.channel('page-notifications')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
+        async (payload) => {
+          // Fetch the current page HTML
+          const response = await fetch(window.location.href);
+          const html = await response.text();
+          
+          // Parse HTML and swap the container content seamlessly
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          
+          const newContainer = doc.getElementById('notifications-container');
+          const currentContainer = document.getElementById('notifications-container');
+          
+          if (newContainer && currentContainer) {
+            currentContainer.innerHTML = newContainer.innerHTML;
+          } else if (currentContainer === null && newContainer) {
+            // In case there were 0 notifications before, and now there are some
+            // We need to swap the empty state UI with the new container
+            // The safest is to reload if the DOM changed radically and we can't find the container
+            // But let's try replacing the whole main content just in case
+            const newMain = doc.querySelector('.max-w-4xl');
+            const currentMain = document.querySelector('.max-w-4xl');
+            if (newMain && currentMain) {
+              currentMain.innerHTML = newMain.innerHTML;
+            } else {
+              window.location.reload();
+            }
+          }
+        }
+      ).subscribe();
+  }
+</script>

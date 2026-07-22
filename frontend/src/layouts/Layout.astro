@@ -1,6 +1,7 @@
 ---
 import '../styles/global.css';
 import { getUser } from '../lib/auth';
+import { createSupabaseServerClient } from '../lib/supabase';
 
 interface Props {
   title?: string;
@@ -13,6 +14,17 @@ const {
 } = Astro.props;
 
 const { user } = await getUser(Astro);
+
+let unreadCount = 0;
+if (user) {
+  const supabase = createSupabaseServerClient(Astro);
+  const { count } = await supabase
+    .from('notifications')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', user.id)
+    .eq('is_read', false);
+  unreadCount = count || 0;
+}
 ---
 
 <!doctype html>
@@ -29,7 +41,7 @@ const { user } = await getUser(Astro);
 		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 		<slot name="head" />
 	</head>
-	<body class="flex min-h-full flex-col font-['Inter']">
+	<body class="flex min-h-full flex-col font-['Inter']" data-user-id={user?.id || ''}>
 		<header class="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur-sm">
 			<div class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
 				<a href="/" id="nav-logo" class="flex items-center gap-2 font-bold text-slate-900 text-lg tracking-tight">
@@ -48,7 +60,20 @@ const { user } = await getUser(Astro);
 						<span class="sm:hidden">Search</span>
 					</a>
           {user && (
-            <a href="/logout" class="font-medium text-slate-600 text-sm hover:text-blue-600 transition-colors">Logout</a>
+            <>
+              <a href="/alerts" class="font-medium text-slate-600 text-sm hover:text-blue-600 transition-colors">Alerts</a>
+              <a href="/notifications" id="nav-notifications" class="relative font-medium text-slate-600 hover:text-blue-600 transition-colors flex items-center justify-center h-8 w-8 rounded-full hover:bg-slate-100">
+                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                {unreadCount > 0 && (
+                  <span id="notification-badge" class="absolute top-0 right-0 block h-4 w-4 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center transform translate-x-1 -translate-y-1">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </a>
+              <a href="/logout" class="font-medium text-slate-600 text-sm hover:text-blue-600 transition-colors">Logout</a>
+            </>
           )}
 				</nav>
 			</div>
@@ -63,5 +88,38 @@ const { user } = await getUser(Astro);
 				<p>Facebook Scraper Data Inspector &bull; Powered by Astro, Tailwind CSS & Supabase</p>
 			</div>
 		</footer>
+
+    <script>
+      import { supabase } from '../lib/supabase';
+      
+      const body = document.body;
+      const userId = body.getAttribute('data-user-id');
+      
+      if (userId) {
+        supabase.channel('layout-notifications')
+          .on(
+            'postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
+            (payload) => {
+              const badge = document.getElementById('notification-badge');
+              if (badge) {
+                let count = parseInt(badge.innerText.replace('+', '')) || 0;
+                count++;
+                badge.innerText = count > 99 ? '99+' : count.toString();
+                badge.classList.remove('hidden');
+              } else {
+                const nav = document.getElementById('nav-notifications');
+                if (nav) {
+                  const span = document.createElement('span');
+                  span.id = 'notification-badge';
+                  span.className = 'absolute top-0 right-0 block h-4 w-4 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center transform translate-x-1 -translate-y-1';
+                  span.innerText = '1';
+                  nav.appendChild(span);
+                }
+              }
+            }
+          ).subscribe();
+      }
+    </script>
 	</body>
 </html>

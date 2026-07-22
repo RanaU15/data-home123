@@ -231,11 +231,132 @@ async function updatePostPermalinkInSupabase(temporaryId, newPermalink, facebook
 /**
  * Upsert a post or array of posts into the Supabase 'posts' table.
  */
+async function processKeywordAlerts(post) {
+    if (!supabase) return;
+    try {
+        const { data: alerts, error } = await supabase
+            .from("alerts")
+            .select("*")
+            .eq("enabled", true);
+            
+        if (error || !alerts) {
+            console.error("❌ Error fetching alerts:", error.message);
+            return;
+        }
+        
+        console.log(`\nChecking Alerts...`);
+        
+        const rawText = `${post.body || ''} ${post.author || ''} ${post.group_name || ''} ${post.location || ''} ${post.post_type || ''}`;
+        const searchPool = rawText.replace(/[\W_]+/g, '').toLowerCase();
+        let matchCount = 0;
+
+        for (const alert of alerts) {
+            const matchedKeywords = new Set();
+            let isMatch = true;
+            
+            // Property Type
+            if (alert.property_types && alert.property_types.length > 0) {
+                let categoryMatch = false;
+                for (const keyword of alert.property_types) {
+                    const cleanKeyword = keyword.replace(/[\W_]+/g, '').toLowerCase();
+                    if (searchPool.includes(cleanKeyword)) {
+                        categoryMatch = true;
+                        matchedKeywords.add(keyword);
+                    }
+                }
+                if (!categoryMatch) isMatch = false;
+            }
+            
+            // Tenant Type
+            if (isMatch && alert.tenant_types && alert.tenant_types.length > 0) {
+                let categoryMatch = false;
+                for (const keyword of alert.tenant_types) {
+                    const cleanKeyword = keyword.replace(/[\W_]+/g, '').toLowerCase();
+                    if (searchPool.includes(cleanKeyword)) {
+                        categoryMatch = true;
+                        matchedKeywords.add(keyword);
+                    }
+                }
+                if (!categoryMatch) isMatch = false;
+            }
+            
+            // Location
+            if (isMatch && alert.location && alert.location.trim() !== '') {
+                const cleanKeyword = alert.location.replace(/[\W_]+/g, '').toLowerCase();
+                if (searchPool.includes(cleanKeyword)) {
+                    matchedKeywords.add(alert.location.trim());
+                } else {
+                    isMatch = false;
+                }
+            }
+            
+            if (isMatch) {
+                matchCount++;
+                const keywordsArray = Array.from(matchedKeywords);
+                console.log(`\nAlert #${alert.id}\nMatched:\n${keywordsArray.join('\n')}\nNotification Created`);
+                
+                const matchedTextStr = keywordsArray.length > 0 ? keywordsArray.join(' • ') : 'Matched all posts (no filters)';
+                
+                let notificationPayload = {
+                    user_id: alert.user_id,
+                    alert_id: alert.id,
+                    post_id: post.id,
+                    matched_keywords: keywordsArray,
+                    matched_text: matchedTextStr,
+                    is_read: false
+                };
+                
+                let { error: insertError } = await supabase
+                    .from('notifications')
+                    .insert(notificationPayload);
+                    
+                if (insertError && insertError.message.includes("matched_keywords")) {
+                    console.warn(`\n⚠️  WARNING: The 'matched_keywords' column is missing in your Supabase 'notifications' table!`);
+                    console.warn(`⚠️  Please run ALTER TABLE public.notifications ADD COLUMN matched_keywords TEXT[] DEFAULT '{}';`);
+                    delete notificationPayload.matched_keywords;
+                    
+                    const retryRes = await supabase.from('notifications').insert(notificationPayload);
+                    insertError = retryRes.error;
+                }
+                    
+                if (insertError) {
+                    if (!insertError.message.includes('duplicate') && !insertError.message.includes('unique')) {
+                        console.error("❌ Error inserting notification:", insertError.message);
+                    }
+                }
+            }
+        }
+        
+        if (matchCount === 0) {
+            console.log("No matching alerts.");
+        }
+    } catch (err) {
+        console.error("❌ Unexpected error in processKeywordAlerts:", err.message);
+    }
+}
+
+/**
+ * Upsert a post or array of posts into the Supabase 'posts' table.
+ */
 async function upsertPostToSupabase(posts) {
     if (!supabase || !posts) return null;
 
     const postsArray = Array.isArray(posts) ? posts : [posts];
     if (postsArray.length === 0) return null;
+
+    // Track which post IDs already exist so we only process alerts for new inserts
+    const existingIds = new Set();
+    try {
+        const queryIds = postsArray.map(p => p.id || p.permalink).filter(Boolean);
+        if (queryIds.length > 0) {
+            const { data: existing } = await supabase.from('posts').select('id').in('id', queryIds);
+            if (existing) {
+                existing.forEach(e => existingIds.add(e.id));
+            }
+        }
+    } catch (e) {
+        // Ignore errors checking existing ids
+    }
 
     try {
         for (const post of postsArray) {
@@ -411,6 +532,13 @@ async function upsertPostToSupabase(posts) {
             return { error };
         }
 
+        // Trigger real-time keyword alerts for NEW posts
+        for (const post of cleanPosts) {
+            if (!existingIds.has(post.id)) {
+                await processKeywordAlerts(post);
+            }
+        }
+
         return { data };
     } catch (err) {
         console.error(`❌ Unexpected Supabase Error:`, err.message);
@@ -509,5 +637,6 @@ module.exports = {
     getExistingPermalinksForGroup,
     normalizeFacebookPostId,
     checkDuplicateInSupabase,
-    getPostStatusInSupabase
+    getPostStatusInSupabase,
+    processKeywordAlerts
 };
