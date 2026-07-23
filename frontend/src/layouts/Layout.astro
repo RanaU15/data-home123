@@ -16,7 +16,17 @@ const {
 const { user } = await getUser(Astro);
 
 let unreadCount = 0;
+let userEmail = '';
+let userFullName = '';
+let userAvatar = '';
+let userInitials = '';
+
 if (user) {
+  userEmail = user.email || '';
+  userFullName = user.user_metadata?.full_name || 'User';
+  userAvatar = user.user_metadata?.avatar_url || '';
+  userInitials = userFullName ? userFullName.charAt(0).toUpperCase() : userEmail.charAt(0).toUpperCase();
+
   const supabase = createSupabaseServerClient(Astro);
   const { count } = await supabase
     .from('notifications')
@@ -72,7 +82,36 @@ if (user) {
                   </span>
                 )}
               </a>
-              <a href="/logout" class="font-medium text-slate-600 text-sm hover:text-blue-600 transition-colors">Logout</a>
+              <div class="relative inline-block text-left" id="profile-menu-container">
+                <button type="button" id="profile-menu-button" class="flex items-center justify-center h-10 w-10 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 overflow-hidden transition-shadow" aria-haspopup="true" aria-expanded="false">
+                  {userAvatar ? (
+                    <img src={userAvatar} alt={userFullName} class="h-full w-full object-cover" />
+                  ) : (
+                    <div class="h-full w-full bg-[#2563eb] text-white flex items-center justify-center font-bold text-lg">
+                      {userInitials}
+                    </div>
+                  )}
+                </button>
+
+                <div id="profile-dropdown" class="absolute right-0 mt-2 w-[260px] origin-top-right rounded-[14px] bg-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] ring-1 ring-black ring-opacity-5 focus:outline-none opacity-0 invisible translate-y-[-10px] transition-all duration-200 z-50 pointer-events-none" role="menu" aria-orientation="vertical" aria-labelledby="profile-menu-button" tabindex="-1">
+                  <div class="p-4 border-b border-slate-100 flex flex-col items-center">
+                    <div class="h-16 w-16 rounded-full overflow-hidden mb-3 shadow-sm border border-slate-100">
+                      {userAvatar ? (
+                        <img src={userAvatar} alt={userFullName} class="h-full w-full object-cover" />
+                      ) : (
+                        <div class="h-full w-full bg-[#2563eb] text-white flex items-center justify-center font-bold text-2xl">
+                          {userInitials}
+                        </div>
+                      )}
+                    </div>
+                    <p class="text-[15px] font-bold text-slate-800 truncate w-full text-center">{userFullName}</p>
+                    <p class="text-[13px] text-gray-500 truncate w-full text-center mt-0.5">{userEmail}</p>
+                  </div>
+                  <div class="p-2" role="none">
+                    <a href="/logout" class="block w-full text-center px-4 py-2.5 text-sm font-semibold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors" role="menuitem" tabindex="-1">Logout</a>
+                  </div>
+                </div>
+              </div>
             </>
           )}
 				</nav>
@@ -119,6 +158,59 @@ if (user) {
               }
             }
           ).subscribe();
+      }
+
+      // Profile Dropdown Interactivity
+      const profileContainer = document.getElementById('profile-menu-container');
+      const profileButton = document.getElementById('profile-menu-button');
+      const profileDropdown = document.getElementById('profile-dropdown');
+      
+      if (profileContainer && profileButton && profileDropdown) {
+        let isOpen = false;
+        
+        const openMenu = () => {
+          isOpen = true;
+          profileDropdown.classList.remove('opacity-0', 'invisible', 'translate-y-[-10px]', 'pointer-events-none');
+          profileDropdown.classList.add('opacity-100', 'visible', 'translate-y-0', 'pointer-events-auto');
+          profileButton.setAttribute('aria-expanded', 'true');
+        };
+        
+        const closeMenu = () => {
+          isOpen = false;
+          profileDropdown.classList.add('opacity-0', 'invisible', 'translate-y-[-10px]', 'pointer-events-none');
+          profileDropdown.classList.remove('opacity-100', 'visible', 'translate-y-0', 'pointer-events-auto');
+          profileButton.setAttribute('aria-expanded', 'false');
+        };
+
+        const toggleMenu = (e) => {
+          e.stopPropagation();
+          isOpen ? closeMenu() : openMenu();
+        };
+
+        profileButton.addEventListener('click', toggleMenu);
+        
+        // Desktop hover logic
+        profileContainer.addEventListener('mouseenter', () => {
+          if (window.matchMedia('(min-width: 768px)').matches) openMenu();
+        });
+        profileContainer.addEventListener('mouseleave', () => {
+          if (window.matchMedia('(min-width: 768px)').matches) closeMenu();
+        });
+
+        // Click outside to close
+        document.addEventListener('click', (e) => {
+          if (isOpen && !profileContainer.contains(e.target)) {
+            closeMenu();
+          }
+        });
+
+        // Escape key to close
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && isOpen) {
+            closeMenu();
+            profileButton.focus();
+          }
+        });
       }
     </script>
 	</body>

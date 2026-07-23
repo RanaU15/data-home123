@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS public.notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
     alert_id UUID REFERENCES public.alerts(id) ON DELETE CASCADE NOT NULL,
-    post_id TEXT REFERENCES public.posts(id) ON DELETE CASCADE NOT NULL,
+    post_id TEXT REFERENCES public.posts(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
     matched_text TEXT,
     matched_keywords TEXT[] DEFAULT '{}',
     is_read BOOLEAN DEFAULT false,
