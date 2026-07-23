@@ -2,6 +2,7 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, '../.env') });
 const { createClient } = require("@supabase/supabase-js");
 const fs = require("fs");
+const NotificationService = require("../backend/services/NotificationService");
 
 let pipeline = null;
 let extractor = null;
@@ -234,6 +235,21 @@ async function updatePostPermalinkInSupabase(temporaryId, newPermalink, facebook
 async function processKeywordAlerts(post) {
     if (!supabase) return;
     try {
+        // Fetch active users to ensure we only notify online users
+        const { data: activeUsersData, error: activeUsersError } = await supabase.rpc('get_active_user_ids');
+        
+        if (activeUsersError) {
+            console.error("❌ Error fetching active users (Make sure SQL script is run):", activeUsersError.message);
+            console.log("Skipping all alerts until get_active_user_ids RPC is available.");
+            return;
+        }
+
+        const activeUserIds = new Set(activeUsersData.map(u => u.user_id));
+        if (activeUserIds.size === 0) {
+            console.log("No active users online. Skipping alerts.");
+            return;
+        }
+
         const { data: alerts, error } = await supabase
             .from("alerts")
             .select("*")
@@ -243,6 +259,14 @@ async function processKeywordAlerts(post) {
             console.error("❌ Error fetching alerts:", error.message);
             return;
         }
+
+        // Filter alerts to only those belonging to active users
+        const activeAlerts = alerts.filter(alert => activeUserIds.has(alert.user_id));
+
+        if (activeAlerts.length === 0) {
+            console.log("No active alerts for currently online users.");
+            return;
+        }
         
         console.log(`\nChecking Alerts...`);
         
@@ -250,7 +274,7 @@ async function processKeywordAlerts(post) {
         const searchPool = rawText.replace(/[\W_]+/g, '').toLowerCase();
         let matchCount = 0;
 
-        for (const alert of alerts) {
+        for (const alert of activeAlerts) {
             const matchedKeywords = new Set();
             let isMatch = true;
             
@@ -306,24 +330,15 @@ async function processKeywordAlerts(post) {
                     is_read: false
                 };
                 
-                let { error: insertError } = await supabase
-                    .from('notifications')
-                    .insert(notificationPayload);
-                    
-                if (insertError && insertError.message.includes("matched_keywords")) {
-                    console.warn(`\n⚠️  WARNING: The 'matched_keywords' column is missing in your Supabase 'notifications' table!`);
-                    console.warn(`⚠️  Please run ALTER TABLE public.notifications ADD COLUMN matched_keywords TEXT[] DEFAULT '{}';`);
-                    delete notificationPayload.matched_keywords;
-                    
-                    const retryRes = await supabase.from('notifications').insert(notificationPayload);
-                    insertError = retryRes.error;
-                }
-                    
-                if (insertError) {
-                    if (!insertError.message.includes('duplicate') && !insertError.message.includes('unique')) {
-                        console.error("❌ Error inserting notification:", insertError.message);
-                    }
-                }
+                const metadata = {
+                    alertName: alert.name,
+                    author: post.author,
+                    groupName: post.group_name,
+                    facebookUrl: post.permalink || post.url,
+                    preview: post.body
+                };
+
+                await NotificationService.notify(supabase, notificationPayload, metadata);
             }
         }
         
@@ -629,6 +644,10 @@ async function checkDuplicateInSupabase(groupId, facebookPostId, postUrl, tempor
     }
 }
 
+async function processEmailBatches() {
+    await NotificationService.processPendingBatches(supabase);
+}
+
 module.exports = {
     supabase,
     upsertPostToSupabase,
@@ -638,5 +657,6 @@ module.exports = {
     normalizeFacebookPostId,
     checkDuplicateInSupabase,
     getPostStatusInSupabase,
-    processKeywordAlerts
+    processKeywordAlerts,
+    processEmailBatches
 };

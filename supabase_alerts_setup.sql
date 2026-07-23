@@ -28,38 +28,46 @@ ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 
 -- Policies for Alerts
+DROP POLICY IF EXISTS "Users can view their own alerts" ON public.alerts;
 CREATE POLICY "Users can view their own alerts"
 ON public.alerts FOR SELECT
 USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own alerts" ON public.alerts;
 CREATE POLICY "Users can insert their own alerts"
 ON public.alerts FOR INSERT
 WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own alerts" ON public.alerts;
 CREATE POLICY "Users can update their own alerts"
 ON public.alerts FOR UPDATE
 USING (auth.uid() = user_id)
 WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete their own alerts" ON public.alerts;
 CREATE POLICY "Users can delete their own alerts"
 ON public.alerts FOR DELETE
 USING (auth.uid() = user_id);
 
 -- Policies for Notifications
+DROP POLICY IF EXISTS "Users can view their own notifications" ON public.notifications;
 CREATE POLICY "Users can view their own notifications"
 ON public.notifications FOR SELECT
 USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own notifications" ON public.notifications;
 CREATE POLICY "Users can update their own notifications"
 ON public.notifications FOR UPDATE
 USING (auth.uid() = user_id)
 WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete their own notifications" ON public.notifications;
 CREATE POLICY "Users can delete their own notifications"
 ON public.notifications FOR DELETE
 USING (auth.uid() = user_id);
 
 -- System can insert notifications (Security Definer Function bypasses RLS)
+DROP POLICY IF EXISTS "System can insert notifications" ON public.notifications;
 CREATE POLICY "System can insert notifications"
 ON public.notifications FOR INSERT
 WITH CHECK (true);

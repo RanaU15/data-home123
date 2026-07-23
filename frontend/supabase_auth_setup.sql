@@ -14,24 +14,28 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 -- Policies
 
 -- SELECT: User can view only their profile.
+DROP POLICY IF EXISTS "User can view only their profile" ON public.profiles;
 CREATE POLICY "User can view only their profile"
   ON public.profiles
   FOR SELECT
   USING (auth.uid() = id);
 
 -- UPDATE: User can update only their profile.
+DROP POLICY IF EXISTS "User can update only their profile" ON public.profiles;
 CREATE POLICY "User can update only their profile"
   ON public.profiles
   FOR UPDATE
   USING (auth.uid() = id);
 
 -- INSERT: Authenticated users can insert only their own profile.
+DROP POLICY IF EXISTS "Authenticated users can insert only their own profile" ON public.profiles;
 CREATE POLICY "Authenticated users can insert only their own profile"
   ON public.profiles
   FOR INSERT
   WITH CHECK (auth.uid() = id);
 
 -- DELETE: User can delete only their own profile.
+DROP POLICY IF EXISTS "User can delete only their own profile" ON public.profiles;
 CREATE POLICY "User can delete only their own profile"
   ON public.profiles
   FOR DELETE

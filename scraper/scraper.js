@@ -1787,6 +1787,9 @@ async function runOnceScrape() {
             }
             // [DEBUG LOG ADDED]: Log successful save
             console.log("Data saved successfully.");
+            
+            // Process batched email notifications
+            await require('./supabase').processEmailBatches();
 
         } catch (err) {
             // [DEBUG LOG ADDED]: Log the inner try/catch error without swallowing, so the top level block catches it
