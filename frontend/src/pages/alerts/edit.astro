@@ -4,9 +4,6 @@ import { getUser } from '../../lib/auth';
 import { createSupabaseServerClient } from '../../lib/supabase';
 
 const { user } = await getUser(Astro);
-if (!user) {
-  return Astro.redirect('/login');
-}
 
 const alertId = Astro.url.searchParams.get('id');
 if (!alertId) {

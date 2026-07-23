@@ -5,9 +5,6 @@ import { createSupabaseServerClient } from '../lib/supabase';
 import type { Post } from '../lib/supabase';
 
 const { user } = await getUser(Astro);
-if (!user) {
-  return Astro.redirect('/login');
-}
 
 const supabase = createSupabaseServerClient(Astro);
 

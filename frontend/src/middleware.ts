@@ -1,22 +1,43 @@
 import { defineMiddleware } from 'astro:middleware';
 import { getUser } from './lib/auth';
 
-const publicRoutes = ['/login', '/register', '/forgot-password', '/reset-password'];
+const authPages = [
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/reset-password'
+];
+
+// Routes that REQUIRE authentication
+const protectedRoutes = [
+  '/alerts/create',
+  '/alerts/edit',
+  '/notifications'
+];
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { url, redirect } = context;
-  const path = url.pathname;
+  const pathname = url.pathname;
 
   const { user } = await getUser(context);
-  const isPublicRoute = publicRoutes.some(route => path.startsWith(route));
 
-  // If not logged in and not on a public route, redirect to login
-  if (!user && !isPublicRoute) {
-    return redirect('/login');
+  const isAuthPage = authPages.some(route =>
+    pathname === route || pathname.startsWith(route + '/')
+  );
+
+  const isProtectedRoute = protectedRoutes.some(route =>
+    pathname === route || pathname.startsWith(route + '/')
+  );
+
+  // Only protect alerts & notifications
+  if (!user && isProtectedRoute) {
+    return redirect(
+      `/login?redirect=${encodeURIComponent(pathname)}`
+    );
   }
 
-  // If logged in and trying to access login/register, redirect to home
-  if (user && isPublicRoute) {
+  // Prevent logged-in users from visiting auth pages
+  if (user && isAuthPage) {
     return redirect('/');
   }
 

@@ -35,14 +35,22 @@ if (Astro.request.method === 'POST') {
         password
       });
 
+      const redirectParam = Astro.url.searchParams.get('redirect');
+      
       if (signInError || !signInData.session) {
-        return Astro.redirect('/login');
+        const loginUrl = redirectParam ? `/login?redirect=${encodeURIComponent(redirectParam)}` : '/login';
+        return Astro.redirect(loginUrl);
       } else {
-        return Astro.redirect('/');
+        const successUrl = redirectParam || '/';
+        return Astro.redirect(successUrl);
       }
     }
   }
 }
+
+const redirectParam = Astro.url.searchParams.get('redirect');
+const loginUrl = redirectParam ? `/login?redirect=${encodeURIComponent(redirectParam)}` : '/login';
+
 ---
 
 <Layout title="Register">
@@ -92,7 +100,7 @@ if (Astro.request.method === 'POST') {
       </form>
 
       <div class="mt-6 text-center text-sm text-slate-600">
-        Already have an account? <a href="/login" class="font-medium text-blue-600 hover:text-blue-500">Log in</a>
+        Already have an account? <a href={loginUrl} class="font-medium text-blue-600 hover:text-blue-500">Log in</a>
       </div>
     </div>
   </div>
