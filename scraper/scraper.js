@@ -18,7 +18,7 @@ const {
     normalizeFacebookPostId,
     checkDuplicateInSupabase,
     getPostStatusInSupabase
-} = require("./supabase");
+} = require("./pocketbase");
 
 // AUTH REFACTOR: Import new auth helper
 const auth = require("./auth");
@@ -1374,8 +1374,8 @@ async function scrapeGroup(group, groupIndex, totalGroups, targetPage, existingF
 
                     if (existingDbRow) {
                         console.log("Updating existing database...");
-                        const { supabase } = require('./supabase');
-                        const { error } = await supabase.from('posts').update({ video_urls: extractedVideoUrls }).eq('id', existingDbRow.id);
+                        const { supabase } = require('./pocketbase');
+                        const error = await supabase.collection('posts').update(existingDbRow.id, { video_urls: extractedVideoUrls }).then(() => null).catch(e => e);
                         if (!error) console.log("Database updated successfully");
                         else console.log(`Database update failed: ${error.message}`);
                     }
@@ -1789,7 +1789,7 @@ async function runOnceScrape() {
             console.log("Data saved successfully.");
             
             // Process batched email notifications
-            await require('./supabase').processEmailBatches();
+            await require('./pocketbase').processEmailBatches();
 
         } catch (err) {
             // [DEBUG LOG ADDED]: Log the inner try/catch error without swallowing, so the top level block catches it
@@ -1820,7 +1820,7 @@ async function runOnceScrape() {
         console.error("SCRAPER ERROR:");
         console.error(topLevelError.stack || topLevelError);
         isScraping = false;
-        process.exit(1);
+        throw topLevelError;
     }
 }
 
@@ -1828,45 +1828,11 @@ async function runOnceScrape() {
 async function handleExit() {
     if (isShuttingDown) return;
     isShuttingDown = true;
-    console.log("\nGraceful shutdown initiated. Exporting pending data and closing browser...");
+    console.log("\nGraceful shutdown initiated. Finishing current task and sending pending emails...");
 
-    // Export JSON
-    if (globalAllPostsData.length > 0) {
-        let existingJson = [];
-        if (fs.existsSync(JSON_FILE)) {
-            try { existingJson = JSON.parse(fs.readFileSync(JSON_FILE, "utf8")); } catch (e) { }
-        }
-        const existingIds = new Set(existingJson.map(p => p.id));
-        const newUniquePosts = globalAllPostsData.filter(p => !existingIds.has(p.id));
-        const updatedJson = [...existingJson, ...newUniquePosts];
-        fs.writeFileSync(JSON_FILE, JSON.stringify(updatedJson, null, 2));
-
-        // Export CSV
-        const hasCsv = fs.existsSync(CSV_FILE);
-        let existingCsvIds = new Set();
-        if (hasCsv) {
-            try {
-                const lines = fs.readFileSync(CSV_FILE, "utf8").split("\n");
-                lines.slice(1).forEach(line => {
-                    const match = line.match(/^"([^"]+)"/);
-                    if (match && match[1]) existingCsvIds.add(match[1]);
-                });
-            } catch (e) { }
-        }
-        let csvContent = hasCsv ? "" : "ID,Group Name,Group URL,Author,Post Date,Permalink,Likes,Comments,Shares,Screenshot,Images,Body\n";
-        globalAllPostsData.forEach(post => {
-            if (!existingCsvIds.has(post.id)) {
-                const cleanAuthor = post.author.replace(/"/g, '""');
-                const cleanBody = post.body.replace(/"/g, '""');
-                const imagesJson = JSON.stringify(post.image_urls || []).replace(/"/g, '""');
-                csvContent += `"${post.id}","${post.group_name}","${post.group_url}","${cleanAuthor}","${post.scraped_at || ''}","${post.permalink || ''}","${post.likes}","${post.comments}","${post.shares}","${post.screenshot || ''}","${imagesJson}","${cleanBody}"\n`;
-            }
-        });
-        if (hasCsv && csvContent.length > 0) {
-            fs.appendFileSync(CSV_FILE, csvContent);
-        } else if (!hasCsv) {
-            fs.writeFileSync(CSV_FILE, csvContent);
-        }
+    // Wait for the main scraping loop to naturally finish its current cycle, save data, and send emails
+    while (isScraping) {
+        await new Promise(resolve => setTimeout(resolve, 500));
     }
 
     updateHealthStatus({ running: false });

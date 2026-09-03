@@ -1,32 +1,36 @@
 # Facebook Scraper API
 
-Cloudflare Worker for serving Facebook scraper data from Supabase.
+Cloudflare Worker for serving Facebook scraper data from PocketBase.
 
 ## Setup
 
 1. Install dependencies:
-   ```sh
+   ```bash
    npm install
    ```
 
-2. Set up environment variables locally:
-   Create a `.dev.vars` file in the root with:
-   ```
-   SUPABASE_URL=your_supabase_url
-   SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+2. Configure environment variables in `.dev.vars` for local development:
+   ```bash
+   POCKETBASE_URL=your_pocketbase_url
+   PB_ADMIN_EMAIL=your_admin_email
+   PB_ADMIN_PASSWORD=your_admin_password
    ```
 
 3. Run locally:
-   ```sh
+   ```bash
    npm run dev
    ```
 
-4. Deploy:
-   ```sh
-   npm run deploy
+## Deployment
+
+1. Login to Cloudflare:
+   ```bash
+   npx wrangler login
    ```
-   *Make sure to add the secrets to Cloudflare before deploying:*
-   ```sh
-   npx wrangler secret put SUPABASE_URL
-   npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+
+2. Set production secrets:
+   ```bash
+   npx wrangler secret put POCKETBASE_URL
+   npx wrangler secret put PB_ADMIN_EMAIL
+   npx wrangler secret put PB_ADMIN_PASSWORD
    ```

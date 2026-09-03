@@ -1,6 +1,6 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { createSupabaseServerClient } from '../lib/supabase';
+import { createPocketBaseServerClient, updatePocketBaseCookie } from '../lib/pocketbase';
 
 let error = '';
 
@@ -12,21 +12,31 @@ if (Astro.request.method === 'POST') {
   if (!email || !password) {
     error = 'Email and password are required.';
   } else {
-    const supabase = createSupabaseServerClient(Astro);
+    const pb = createPocketBaseServerClient(Astro);
     
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (signInError) {
-      error = signInError.message;
-    } else {
+    try {
+      await pb.collection('users').authWithPassword(email, password);
+      
+      try {
+        const userRec = pb.authStore.record;
+        if (userRec) {
+          const profile = await pb.collection('profiles').getFirstListItem(`user="${userRec.id}"`);
+          await pb.collection('profiles').update(profile.id, { is_logged_in: true });
+        }
+      } catch (e) {
+        console.error("Failed to set is_logged_in=true on login", e);
+      }
+      
+      updatePocketBaseCookie(Astro, pb);
+      
       const redirectUrl = Astro.url.searchParams.get('redirect') || '/';
       return Astro.redirect(redirectUrl);
+    } catch (signInError: any) {
+      error = signInError.message || 'Invalid email or password.';
     }
   }
 }
+
 
 const redirectParam = Astro.url.searchParams.get('redirect');
 const registerUrl = redirectParam ? `/register?redirect=${encodeURIComponent(redirectParam)}` : '/register';
@@ -85,20 +95,20 @@ const registerUrl = redirectParam ? `/register?redirect=${encodeURIComponent(red
   <script>
     const togglePassword = document.getElementById('togglePassword');
     const password = document.getElementById('password');
+    const passwordInput = document.getElementById('password') as HTMLInputElement | null;
     const eyeIcon = document.getElementById('eyeIcon');
     const eyeSlashIcon = document.getElementById('eyeSlashIcon');
     
-    if (togglePassword && password) {
+    if (togglePassword && passwordInput) {
       togglePassword.addEventListener('click', function () {
-        const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
-        password.setAttribute('type', type);
-        
-        if (type === 'text') {
-          eyeIcon.classList.add('hidden');
-          eyeSlashIcon.classList.remove('hidden');
+        if (passwordInput.type === 'password') {
+          passwordInput.type = 'text';
+          eyeIcon?.classList.add('hidden');
+          eyeSlashIcon?.classList.remove('hidden');
         } else {
-          eyeIcon.classList.remove('hidden');
-          eyeSlashIcon.classList.add('hidden');
+          passwordInput.type = 'password';
+          eyeIcon?.classList.remove('hidden');
+          eyeSlashIcon?.classList.add('hidden');
         }
       });
     }

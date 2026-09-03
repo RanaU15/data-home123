@@ -2,7 +2,7 @@
 import Layout from '../layouts/Layout.astro';
 import PostCard from '../components/PostCard.astro';
 import SkeletonCard from '../components/SkeletonCard.astro';
-import { supabase, type Post } from '../lib/supabase';
+import { type Post } from '../lib/pocketbase';
 
 // Pagination setup
 const currentPage = Math.max(1, parseInt(Astro.url.searchParams.get('page') || '1', 10));
@@ -11,8 +11,9 @@ const from = (currentPage - 1) * pageSize;
 const to = from + pageSize - 1;
 
 // Fetch posts and total count from Supabase
-import { filterPosts, normalizeQuery } from '../lib/filters';
+import { normalizeQuery } from '../lib/filters';
 import { getAllPosts } from '../lib/data';
+let error: any = null;
 
 import { performHybridSearch } from '../lib/hybridSearch';
 
@@ -164,7 +165,7 @@ const hasPosts = posts && posts.length > 0;
   </div>
 
   <script>
-    import { normalizePost, type FilterState, filterPosts } from '../lib/filters';
+    import { normalizePost } from '../lib/filters';
 
     document.addEventListener("DOMContentLoaded", () => {
       const skeletonGrid = document.getElementById("skeleton-grid");
@@ -182,10 +183,8 @@ const hasPosts = posts && posts.length > 0;
       const searchInput = document.getElementById("global-search-input") as HTMLInputElement;
       const searchBtn = document.getElementById("global-search-btn");
       const postWrappers = Array.from(document.querySelectorAll(".post-wrapper")) as HTMLElement[];
-      const badge = document.getElementById("post-count-badge");
-      
+      const badge = document.getElementById("active-filters-badge");
       let debounceTimer: ReturnType<typeof setTimeout>;
-      const initialTotal = parseInt(badge?.getAttribute("data-initial") || "0", 10);
 
 
 

@@ -1,6 +1,5 @@
 import { filterPosts, type FilterState } from './filters';
 import { getEmbedding } from './embeddings';
-import { supabase } from './supabase';
 
 export async function performHybridSearch(allPosts: any[], queryText: string, parsedFilters: FilterState): Promise<any[]> {
   // 1. Exact matches
@@ -10,23 +9,9 @@ export async function performHybridSearch(allPosts: any[], queryText: string, pa
     return exactMatchPosts;
   }
 
-  // 2. Semantic matches
+  // 2. Semantic matches (Bypassed since PocketBase does not natively support vector search
+  // and local embeddings in CF workers are disabled anyway)
   let vectorResults: any[] = [];
-  try {
-    const embedding = await getEmbedding(queryText);
-    const { data, error } = await supabase.rpc('match_posts', {
-      query_embedding: embedding,
-      match_threshold: 0.3,
-      match_count: 50
-    });
-    if (error) {
-      console.error("Vector search error:", error);
-    } else {
-      vectorResults = data || [];
-    }
-  } catch (err) {
-    console.error("Failed to generate embedding or query supabase:", err);
-  }
   
   const vectorIds = new Set(vectorResults.map((r: any) => r.id));
   

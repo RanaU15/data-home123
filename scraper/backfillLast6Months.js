@@ -21,7 +21,7 @@ const {
     getExistingPermalinksForGroup,
     normalizeFacebookPostId,
     checkDuplicateInSupabase
-} = require("./supabase");
+} = require("./pocketbase");
 
 const auth = require("./auth");
 

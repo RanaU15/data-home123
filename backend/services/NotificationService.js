@@ -6,27 +6,18 @@ class NotificationService {
     /**
      * Creates a notification without sending an email immediately.
      */
-    async notify(supabase, notificationPayload, metadata) {
+    async notify(pb, notificationPayload, metadata) {
         try {
-            // Insert notification
-            const { error: insertError } = await supabase
-                .from('notifications')
-                .insert(notificationPayload);
-
-            if (insertError) {
-                if (insertError.message && (insertError.message.includes('duplicate') || insertError.message.includes('unique'))) {
-                    // Do nothing for duplicates
-                    return { success: true }; 
-                }
-                console.error("❌ Error inserting notification in NotificationService:", insertError.message);
-                return { success: false, error: insertError.message };
-            }
-            
-            console.log(`\nNotification created for Alert #${notificationPayload.alert_id} (queued for batching)`);
+            // In PocketBase, if the user doesn't pass an id, one is auto-generated.
+            // If they pass an id that exists, it fails.
+            await pb.collection('notifications').create(notificationPayload);
+            console.log(`\nNotification created for Alert #${notificationPayload.alert} (queued for batching)`);
             return { success: true };
-
         } catch (err) {
-            console.error("❌ Unexpected error in NotificationService.notify:", err.message);
+            if (err.status === 400 && err.response?.data?.id?.code === 'validation_not_unique') {
+                return { success: true }; 
+            }
+            console.error("❌ Error inserting notification in NotificationService:", err.message);
             return { success: false, error: err.message };
         }
     }
@@ -34,29 +25,18 @@ class NotificationService {
     /**
      * Processes all pending notifications and dispatches grouped summary emails.
      */
-    async processPendingBatches(supabase) {
+    async processPendingBatches(pb) {
         try {
             console.log("\nProcessing pending email batches...");
 
-            // Fetch pending notifications joining with alerts, posts, and profiles
-            // Include those with email_error so they can be retried, but ensure email_batch_id is NULL
-            const { data: pending, error } = await supabase
-                .from('notifications')
-                .select(`
-                    id,
-                    user_id,
-                    alert_id,
-                    matched_keywords,
-                    created_at,
-                    alerts ( name ),
-                    posts ( id, author, group_name, body, permalink ),
-                    profiles ( email, full_name )
-                `)
-                .eq('email_sent', false)
-                .is('email_batch_id', null);
-
-            if (error) {
-                console.error("❌ Error fetching pending notifications:", error.message);
+            let pending = [];
+            try {
+                pending = await pb.collection('notifications').getFullList({
+                    filter: 'email_sent=false && email_batch_id=""',
+                    expand: 'alert,post,user.user'
+                });
+            } catch (err) {
+                console.error("❌ Error fetching pending notifications:", err.message);
                 return;
             }
 
@@ -65,10 +45,10 @@ class NotificationService {
                 return;
             }
 
-            // Group by user_id and alert_id
+            // Group by user profile ID and alert ID
             const groups = {};
             for (const notif of pending) {
-                const groupKey = `${notif.user_id}_${notif.alert_id}`;
+                const groupKey = `${notif.user}_${notif.alert}`;
                 if (!groups[groupKey]) {
                     groups[groupKey] = [];
                 }
@@ -76,51 +56,48 @@ class NotificationService {
             }
 
             for (const groupKey of Object.keys(groups)) {
-                // Sort by newest first
                 const groupNotifs = groups[groupKey].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
                 
-                const userId = groupNotifs[0].user_id;
-                const alertId = groupNotifs[0].alert_id;
-                const alertName = groupNotifs[0].alerts ? groupNotifs[0].alerts.name : "Unknown Alert";
-
-                let userEmail = null;
-                let userFullName = null;
-
-                // Try to get email from profiles join first
-                if (groupNotifs[0].profiles && groupNotifs[0].profiles.email) {
-                    userEmail = groupNotifs[0].profiles.email;
-                    userFullName = groupNotifs[0].profiles.full_name;
-                } else {
-                    // Fallback to admin auth API if profile join fails
-                    const { data: userData } = await supabase.auth.admin.getUserById(userId);
-                    if (userData && userData.user && userData.user.email) {
-                        userEmail = userData.user.email;
-                        userFullName = userData.user.user_metadata?.full_name || null;
-                    }
+                const userId = groupNotifs[0].user;
+                const alertName = groupNotifs[0].expand?.alert?.name || "Unknown Alert";
+                const profileObj = groupNotifs[0].expand?.user;
+                const userObj = profileObj?.expand?.user;
+                
+                if (profileObj && profileObj.is_logged_in !== true) {
+                    console.log(`User ${userId} is OFFLINE. Discarding batch email for alert "${alertName}".`);
+                    // Mark as sent but with a note so they are cleared from the queue silently
+                    await this.updateBatchStatus(pb, groupNotifs, true, "Discarded (User Offline)", "offline_discard");
+                    continue;
                 }
+
+                let userEmail = userObj?.email || null;
+                let userFullName = userObj?.name || null;
                 
                 if (!userEmail) {
                     console.error(`❌ Error fetching user email for user ${userId}`);
-                    await this.updateBatchStatus(supabase, groupNotifs, false, "Failed to fetch user email", null);
+                    await this.updateBatchStatus(pb, groupNotifs, false, "Failed to fetch user email", "");
                     continue;
                 }
 
                 const recipient = userFullName ? `"${userFullName}" <${userEmail}>` : userEmail;
 
+                // For EmailService, we need to adapt groupNotifs to look like what it expects
+                const adaptedNotifs = groupNotifs.map(n => ({
+                    ...n,
+                    posts: n.expand?.post || {}
+                }));
+
                 console.log(`Sending batch email to ${recipient} for alert "${alertName}" (${groupNotifs.length} posts)...`);
                 
-                // Send summary email
-                const emailResult = await EmailService.sendSummaryEmail(recipient, alertName, groupNotifs);
+                const emailResult = await EmailService.sendSummaryEmail(recipient, alertName, adaptedNotifs);
 
                 if (emailResult.success) {
-                    // Generate a unique batch ID only on success
-                    const batchId = crypto.randomUUID();
+                    const batchId = crypto.randomUUID().replace(/-/g, '').substring(0, 15);
                     console.log(`Batch email delivered to ${userEmail} [Batch ID: ${batchId}]`);
-                    await this.updateBatchStatus(supabase, groupNotifs, true, null, batchId);
+                    await this.updateBatchStatus(pb, groupNotifs, true, "", batchId);
                 } else {
                     console.error(`Batch email failed to ${userEmail}. Reason:`, emailResult.error);
-                    // Do NOT assign batch ID on failure to allow retry
-                    await this.updateBatchStatus(supabase, groupNotifs, false, emailResult.error, null);
+                    await this.updateBatchStatus(pb, groupNotifs, false, emailResult.error, "");
                 }
             }
 
@@ -132,28 +109,25 @@ class NotificationService {
     /**
      * Helper to update the email delivery status of a batch of notifications
      */
-    async updateBatchStatus(supabase, notifications, emailSent, emailError, batchId) {
-        const notificationIds = notifications.map(n => n.id);
-        
+    async updateBatchStatus(pb, notifications, emailSent, emailError, batchId) {
         const updatePayload = {
             email_sent: emailSent,
-            email_error: emailError,
-            email_batch_id: batchId
+            email_error: emailError || "",
+            email_batch_id: batchId || ""
         };
 
         if (emailSent) {
             updatePayload.email_sent_at = new Date().toISOString();
         } else {
-            updatePayload.email_sent_at = null;
+            updatePayload.email_sent_at = "";
         }
 
-        const { error } = await supabase
-            .from('notifications')
-            .update(updatePayload)
-            .in('id', notificationIds);
-            
-        if (error) {
-            console.error(`❌ Failed to update batch status:`, error.message);
+        for (const n of notifications) {
+            try {
+                await pb.collection('notifications').update(n.id, updatePayload);
+            } catch (error) {
+                console.error(`❌ Failed to update batch status for notification ${n.id}:`, error.message);
+            }
         }
     }
 }

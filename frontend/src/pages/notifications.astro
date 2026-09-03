@@ -1,35 +1,79 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import { getUser } from '../lib/auth';
-import { createSupabaseServerClient } from '../lib/supabase';
-import type { Post } from '../lib/supabase';
+import { createPocketBaseServerClient } from '../lib/pocketbase';
+import type { Post } from '../lib/pocketbase';
 
 const { user } = await getUser(Astro);
 
-const supabase = createSupabaseServerClient(Astro);
+const pb = createPocketBaseServerClient(Astro);
+
+let profileId = '';
+if (user) {
+  const profile = await pb.collection('profiles').getFirstListItem(`user="${user.id}"`).catch(() => null);
+  if (profile) profileId = profile.id;
+}
 
 if (Astro.request.method === 'POST') {
-  const formData = await Astro.request.formData();
-  const action = formData.get('action');
-  const notificationId = formData.get('notification_id');
-
-  if (action === 'mark_read' && notificationId) {
-    await supabase.from('notifications').update({ is_read: true }).eq('id', notificationId).eq('user_id', user.id);
-  } else if (action === 'delete' && notificationId) {
-    await supabase.from('notifications').delete().eq('id', notificationId).eq('user_id', user.id);
+  const data = await Astro.request.formData();
+  const action = data.get('action')?.toString();
+  const notificationId = data.get('notification_id')?.toString();
+      
+  if (notificationId) {
+    try {
+      const current = await pb.collection('notifications').getOne(notificationId, { expand: 'user' }).catch(() => null);
+      if (current && user && current.expand?.user?.user === user.id) {
+        if (action === 'mark_read') {
+          await pb.collection('notifications').update(notificationId, { is_read: true }).catch(() => {});
+        } else if (action === 'delete') {
+          await pb.collection('notifications').delete(notificationId).catch(() => {});
+        }
+      }
+    } catch (e) {}
   } else if (action === 'mark_all_read') {
-    await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
+    try {
+      if (user) {
+        await pb.collection('notifications').getFullList({
+          filter: `user.user="${user.id}" && is_read=false`
+        }).then(async (unread) => {
+          for (const n of unread) {
+            await pb.collection('notifications').update(n.id, { is_read: true }).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+    } catch (e) {}
+  } else if (action === 'delete_all') {
+    try {
+      if (user) {
+        await pb.collection('notifications').getFullList({
+          filter: `user.user="${user.id}"`
+        }).then(async (allNotifs) => {
+          for (const n of allNotifs) {
+            await pb.collection('notifications').delete(n.id).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+    } catch (e) {}
   }
 
   return Astro.redirect('/notifications');
 }
 
-const { data: notifications, error } = await supabase
-  .from('notifications')
-  .select('*, alerts(name), posts(*)')
-  .eq('user_id', user.id)
-  .order('created_at', { ascending: false })
-  .limit(50);
+let notifications: any[] = [];
+let error: any = null;
+
+try {
+  if (user) {
+    const result = await pb.collection('notifications').getList(1, 50, {
+      filter: `user.user="${user.id}"`,
+      sort: '-created_at',
+      expand: 'alert,post'
+    });
+    notifications = result.items;
+  }
+} catch (e: any) {
+  error = e;
+}
 
 function formatDate(dateStr: string) {
   try {
@@ -37,26 +81,37 @@ function formatDate(dateStr: string) {
     if (isNaN(d.getTime())) return dateStr;
     return d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true });
   } catch(e) {
+    console.error("Error formatting date:", e);
     return dateStr;
   }
 }
 ---
 
 <Layout title="Notifications | Data Inspector">
-  <div class="max-w-4xl mx-auto">
+  <div class="max-w-4xl mx-auto" data-profile-id={profileId}>
     <div class="flex items-center justify-between mb-8">
       <div>
         <h1 class="text-2xl font-bold text-slate-900">Notifications</h1>
         <p class="text-slate-500 text-sm mt-1">Alerts triggered by new Facebook posts.</p>
       </div>
-      {notifications && notifications.some(n => !n.is_read) && (
-        <form method="POST">
-          <input type="hidden" name="action" value="mark_all_read" />
-          <button type="submit" class="text-sm font-semibold text-blue-600 hover:text-blue-500 transition-colors">
-            Mark all as read
-          </button>
-        </form>
-      )}
+      <div class="flex items-center gap-4">
+        {notifications && notifications.some(n => !n.is_read) && (
+          <form method="POST">
+            <input type="hidden" name="action" value="mark_all_read" />
+            <button type="submit" class="text-sm font-semibold text-blue-600 hover:text-blue-500 transition-colors">
+              Mark all as read
+            </button>
+          </form>
+        )}
+        {notifications && notifications.length > 0 && (
+          <form method="POST">
+            <input type="hidden" name="action" value="delete_all" />
+            <button type="submit" class="text-sm font-semibold text-red-600 hover:text-red-500 transition-colors">
+              Delete all
+            </button>
+          </form>
+        )}
+      </div>
     </div>
 
     {error && (
@@ -78,7 +133,7 @@ function formatDate(dateStr: string) {
     ) : (
       <div id="notifications-container" class="space-y-4">
         {notifications.map((notification) => {
-          const post = notification.posts as Post;
+          const post = notification.expand?.post as Post;
           const isUnread = !notification.is_read;
           return (
             <div class={`rounded-xl border p-5 transition-colors ${isUnread ? 'bg-blue-50/50 border-blue-200 shadow-sm' : 'bg-white border-slate-200 shadow-sm hover:shadow-md'}`}>
@@ -87,7 +142,7 @@ function formatDate(dateStr: string) {
                   <div class="flex items-center gap-2 mb-2">
                     {isUnread && <span class="h-2.5 w-2.5 rounded-full bg-blue-600 flex-shrink-0"></span>}
                     <span class="text-xs font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md">
-                      Alert: {notification.alerts?.name || 'Deleted Alert'}
+                      Alert: {notification.expand?.alert?.name || 'Deleted Alert'}
                     </span>
                     <span class="text-xs text-slate-500">
                       {formatDate(notification.created_at)}
@@ -167,18 +222,15 @@ function formatDate(dateStr: string) {
 </Layout>
 
 <script>
-  import { supabase } from '../lib/supabase';
+  import { pb } from '../lib/pocketbase';
   
-  const body = document.body;
-  const userId = body.getAttribute('data-user-id');
+  const container = document.querySelector('[data-profile-id]');
+  const profileId = container?.getAttribute('data-profile-id');
   
-  if (userId) {
-    supabase.channel('page-notifications')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
-        async (payload) => {
-          // Fetch the current page HTML
+  if (profileId) {
+    pb.collection('notifications').subscribe('*', async function (e) {
+      if (e.action === 'create' && e.record.user === profileId) {
+        // Fetch the current page HTML
           const response = await fetch(window.location.href);
           const html = await response.text();
           
@@ -205,6 +257,6 @@ function formatDate(dateStr: string) {
             }
           }
         }
-      ).subscribe();
+    });
   }
 </script>

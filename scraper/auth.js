@@ -23,6 +23,9 @@ async function launchBrowser() {
     // MUST run headless: true, NO persistent profile
     browser = await chromium.launch({
         headless: true,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
         args: [
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",

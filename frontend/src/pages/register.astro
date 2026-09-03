@@ -1,6 +1,6 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { createSupabaseServerClient } from '../lib/supabase';
+import { createPocketBaseServerClient, updatePocketBaseCookie } from '../lib/pocketbase';
 
 let error = '';
 
@@ -15,35 +15,40 @@ if (Astro.request.method === 'POST') {
   } else if (password.length < 8) {
     error = 'Password must be at least 8 characters.';
   } else {
-    const supabase = createSupabaseServerClient(Astro);
+    const pb = createPocketBaseServerClient(Astro);
     
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName
-        }
-      }
-    });
-
-    if (signUpError) {
-      error = signUpError.message;
-    } else {
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+    try {
+      const newUser = await pb.collection('users').create({
         email,
-        password
+        password,
+        passwordConfirm: password,
+        name: fullName
       });
 
-      const redirectParam = Astro.url.searchParams.get('redirect');
+      // Log them in after successful registration
+      await pb.collection('users').authWithPassword(email, password);
       
-      if (signInError || !signInData.session) {
-        const loginUrl = redirectParam ? `/login?redirect=${encodeURIComponent(redirectParam)}` : '/login';
-        return Astro.redirect(loginUrl);
-      } else {
-        const successUrl = redirectParam || '/';
-        return Astro.redirect(successUrl);
+      // Create their profile record
+      try {
+        await pb.collection('profiles').create({
+          user: newUser.id,
+          full_name: fullName,
+          email: email,
+          is_logged_in: true
+        });
+      } catch (profileErr) {
+        console.error("Failed to create profile during registration:", profileErr);
       }
+      
+      updatePocketBaseCookie(Astro, pb);
+
+      const redirectParam = Astro.url.searchParams.get('redirect');
+      if (redirectParam) {
+        return Astro.redirect(redirectParam);
+      }
+      return Astro.redirect('/');
+    } catch (signUpError: any) {
+      error = signUpError.message || 'Error creating account.';
     }
   }
 }
@@ -108,20 +113,20 @@ const loginUrl = redirectParam ? `/login?redirect=${encodeURIComponent(redirectP
   <script>
     const togglePassword = document.getElementById('togglePassword');
     const password = document.getElementById('password');
+    const passwordInput = document.getElementById('password') as HTMLInputElement;
     const eyeIcon = document.getElementById('eyeIcon');
     const eyeSlashIcon = document.getElementById('eyeSlashIcon');
     
-    if (togglePassword && password) {
+    if (togglePassword && passwordInput) {
       togglePassword.addEventListener('click', function () {
-        const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
-        password.setAttribute('type', type);
-        
-        if (type === 'text') {
-          eyeIcon.classList.add('hidden');
-          eyeSlashIcon.classList.remove('hidden');
-        } else {
-          eyeIcon.classList.remove('hidden');
-          eyeSlashIcon.classList.add('hidden');
+        if (passwordInput && passwordInput.type === 'password') {
+          passwordInput.type = 'text';
+          eyeIcon?.classList.add('hidden');
+          eyeSlashIcon?.classList.remove('hidden');
+        } else if (passwordInput) {
+          passwordInput.type = 'password';
+          eyeIcon?.classList.remove('hidden');
+          eyeSlashIcon?.classList.add('hidden');
         }
       });
     }

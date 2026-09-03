@@ -1,6 +1,7 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { supabase, parseImages, getDisplayDate, parseVideoUrls, type Post } from '../../lib/supabase';
+import { pb, getDisplayDate, type Post } from '../../lib/pocketbase';
+import { resolvePostImages, resolvePostVideos, resolvePostVideoThumbnail } from '../../lib/media';
 
 const { id } = Astro.params;
 
@@ -10,37 +11,20 @@ if (!id) {
 
 const cleanId = decodeURIComponent(id || '');
 
-// First try querying by facebook_post_id
-let { data: postData, error } = await supabase
-  .from('posts')
-  .select('*')
-  .eq('facebook_post_id', cleanId)
-  .limit(1)
-  .single();
-
-if (!postData) {
-  // Try querying by id
-  const { data: dataById } = await supabase
-    .from('posts')
-    .select('*')
-    .eq('id', cleanId)
-    .limit(1)
-    .single();
-  postData = dataById;
+let postData = null;
+try {
+  postData = await pb.collection('posts').getFirstListItem(`facebook_post_id="${cleanId.replace(/"/g, '\\"')}"`);
+} catch (e) {
+  try {
+    postData = await pb.collection('posts').getOne(cleanId);
+  } catch (e2) {
+    try {
+      postData = await pb.collection('posts').getFirstListItem(`temporary_id="${cleanId.replace(/"/g, '\\"')}"`);
+    } catch (e3) {}
+  }
 }
 
-if (!postData) {
-  // Try querying by temporary_id
-  const { data: dataByTemp } = await supabase
-    .from('posts')
-    .select('*')
-    .eq('temporary_id', cleanId)
-    .limit(1)
-    .single();
-  postData = dataByTemp;
-}
-
-const post: Post | null = postData || null;
+const post: Post | null = postData as unknown as Post || null;
 
 let images: string[] = [];
 let author = 'Unknown Author';
@@ -51,20 +35,14 @@ let body = '';
 let imageCount = 0;
 
 if (post) {
-  images = post.image_urls || [];
-  if (images.length === 0 && post.images) {
-    let oldImages = Array.isArray(post.images) ? post.images : [];
-    if (typeof post.images === 'string') {
-      try { oldImages = JSON.parse(post.images); } catch(e) {}
-    }
-    images = oldImages.filter((img: string) => !img.includes('supabase.co'));
-  }
+  images = resolvePostImages(post);
+  
   author = post.author || 'Unknown Author';
   groupName = post.group_name || post.group_id || 'Facebook Group';
   postDate = getDisplayDate(post);
   
-  const parsedVideos = parseVideoUrls(post.video_urls);
-  post.video_urls = parsedVideos;
+  post.video_urls = resolvePostVideos(post);
+  post.video_thumbnail = resolvePostVideoThumbnail(post) || undefined;
   
   permalink = post.post_url || post.permalink || '';
   if (!permalink.startsWith('http')) {
@@ -329,7 +307,7 @@ if (post) {
     <img id="lightbox-img" src="" alt="Fullscreen image" class="max-h-screen max-w-full object-contain pointer-events-none select-none transition-opacity duration-200" />
   </div>
 
-  <script id="images-data" type="application/json" set:html={JSON.stringify(images)}></script>
+  <script is:inline id="images-data" type="application/json" set:html={JSON.stringify(images)}></script>
 
   <script>
     document.addEventListener("DOMContentLoaded", () => {

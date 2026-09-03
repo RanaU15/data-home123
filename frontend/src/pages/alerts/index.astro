@@ -1,25 +1,31 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { getUser } from '../../lib/auth';
-import { createSupabaseServerClient } from '../../lib/supabase';
+import { createPocketBaseServerClient } from '../../lib/pocketbase';
 
 const { user } = await getUser(Astro);
 
-const supabase = createSupabaseServerClient(Astro);
+const pb = createPocketBaseServerClient(Astro);
 
 // Handle toggle and delete
 if (user && Astro.request.method === 'POST') {
   const formData = await Astro.request.formData();
   const action = formData.get('action');
-  const alertId = formData.get('alert_id');
+  const alertId = formData.get('alert_id')?.toString();
 
   if (action === 'toggle' && alertId) {
-    const { data: current } = await supabase.from('alerts').select('enabled').eq('id', alertId).eq('user_id', user.id).single();
-    if (current) {
-      await supabase.from('alerts').update({ enabled: !current.enabled }).eq('id', alertId).eq('user_id', user.id);
+    try {
+      const current = await pb.collection('alerts').getOne(alertId);
+      await pb.collection('alerts').update(alertId, { enabled: !current.enabled });
+    } catch (e) {
+      console.error('Failed to toggle alert', e);
     }
   } else if (action === 'delete' && alertId) {
-    await supabase.from('alerts').delete().eq('id', alertId).eq('user_id', user.id);
+    try {
+      await pb.collection('alerts').delete(alertId);
+    } catch (e) {
+      console.error('Failed to delete alert', e);
+    }
   }
   
   return Astro.redirect('/alerts');
@@ -29,13 +35,14 @@ let alerts: any = null;
 let error: any = null;
 
 if (user) {
-  const { data, error: fetchError } = await supabase
-    .from('alerts')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
-  alerts = data;
-  error = fetchError;
+  try {
+    alerts = await pb.collection('alerts').getFullList({
+      filter: `user.user="${user.id}"`,
+      sort: '-created_at'
+    });
+  } catch (fetchError: any) {
+    error = fetchError;
+  }
 }
 
 ---
@@ -76,7 +83,7 @@ if (user) {
       </div>
     ) : (
       <div class="grid gap-4">
-        {alerts.map((alert) => (
+        {alerts.map((alert: any) => (
           <div class="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
             <div class="flex-1 min-w-0 pr-4">
               <div class="flex items-center gap-3 mb-1">

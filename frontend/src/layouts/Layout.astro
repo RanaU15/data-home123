@@ -1,7 +1,8 @@
 ---
 import '../styles/global.css';
 import { getUser } from '../lib/auth';
-import { createSupabaseServerClient } from '../lib/supabase';
+import { createPocketBaseServerClient } from '../lib/pocketbase';
+import { getPocketBaseMediaUrl } from '../lib/media';
 
 interface Props {
   title?: string;
@@ -23,17 +24,22 @@ let userInitials = '';
 
 if (user) {
   userEmail = user.email || '';
-  userFullName = user.user_metadata?.full_name || 'User';
-  userAvatar = user.user_metadata?.avatar_url || '';
+  userFullName = user.name || 'User';
+  if (user.avatar) {
+    userAvatar = getPocketBaseMediaUrl('users', user.id, user.avatar);
+  }
   userInitials = userFullName ? userFullName.charAt(0).toUpperCase() : userEmail.charAt(0).toUpperCase();
 
-  const supabase = createSupabaseServerClient(Astro);
-  const { count } = await supabase
-    .from('notifications')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', user.id)
-    .eq('is_read', false);
-  unreadCount = count || 0;
+  const pb = createPocketBaseServerClient(Astro);
+  try {
+    const result = await pb.collection('notifications').getList(1, 1, {
+      filter: `user.user="${user.id}" && is_read=false`,
+      fields: 'id'
+    });
+    unreadCount = result.totalItems || 0;
+  } catch (err) {
+    console.error('Failed to fetch notifications in Layout:', err.message);
+  }
 }
 ---
 
@@ -126,40 +132,37 @@ if (user) {
 
 		<footer class="border-t border-slate-200 bg-white py-6">
 			<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center text-xs text-slate-500">
-				<p>Facebook Scraper Data Inspector &bull; Powered by Astro, Tailwind CSS & Supabase</p>
+				<p>Facebook Scraper Data Inspector &bull; Powered by Astro, Tailwind CSS & PocketBase</p>
 			</div>
 		</footer>
 
     <script>
-      import { supabase } from '../lib/supabase';
+      import { pb } from '../lib/pocketbase';
       
       const body = document.body;
       const userId = body.getAttribute('data-user-id');
       
       if (userId) {
-        supabase.channel('layout-notifications')
-          .on(
-            'postgres_changes',
-            { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
-            (payload) => {
-              const badge = document.getElementById('notification-badge');
-              if (badge) {
-                let count = parseInt(badge.innerText.replace('+', '')) || 0;
-                count++;
-                badge.innerText = count > 99 ? '99+' : count.toString();
-                badge.classList.remove('hidden');
-              } else {
-                const nav = document.getElementById('nav-notifications');
-                if (nav) {
-                  const span = document.createElement('span');
-                  span.id = 'notification-badge';
-                  span.className = 'absolute top-0 right-0 block h-4 w-4 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center transform translate-x-1 -translate-y-1';
-                  span.innerText = '1';
-                  nav.appendChild(span);
-                }
+        pb.collection('notifications').subscribe('*', function (e) {
+          if (e.action === 'create' && e.record.user_id === userId) {
+            const badge = document.getElementById('notification-badge');
+            if (badge) {
+              let count = parseInt(badge.innerText.replace('+', '')) || 0;
+              count++;
+              badge.innerText = count > 99 ? '99+' : count.toString();
+              badge.classList.remove('hidden');
+            } else {
+              const nav = document.getElementById('nav-notifications');
+              if (nav) {
+                const span = document.createElement('span');
+                span.id = 'notification-badge';
+                span.className = 'absolute top-0 right-0 block h-4 w-4 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center transform translate-x-1 -translate-y-1';
+                span.innerText = '1';
+                nav.appendChild(span);
               }
             }
-          ).subscribe();
+          }
+        });
       }
 
       // Profile Dropdown Interactivity
@@ -184,21 +187,21 @@ if (user) {
           profileButton.setAttribute('aria-expanded', 'false');
         };
 
-        const toggleMenu = (e) => {
-          e.stopPropagation();
+        const toggleMenu = (e?: Event) => {
+          e?.stopPropagation();
           isOpen ? closeMenu() : openMenu();
         };
 
         profileButton.addEventListener('click', toggleMenu);
-        
-
 
         // Click outside to close
-        document.addEventListener('click', (e) => {
-          if (isOpen && !profileContainer.contains(e.target)) {
+        const closeMenuOutside = (e: Event) => {
+          if (isOpen && !profileContainer.contains(e.target as Node)) {
             closeMenu();
           }
-        });
+        };
+
+        document.addEventListener('click', closeMenuOutside);
 
         // Escape key to close
         document.addEventListener('keydown', (e) => {

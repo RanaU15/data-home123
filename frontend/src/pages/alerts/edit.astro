@@ -1,16 +1,16 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { getUser } from '../../lib/auth';
-import { createSupabaseServerClient } from '../../lib/supabase';
+import { createPocketBaseServerClient } from '../../lib/pocketbase';
 
 const { user } = await getUser(Astro);
 
 const alertId = Astro.url.searchParams.get('id');
-if (!alertId) {
+if (!alertId || !user) {
   return Astro.redirect('/alerts');
 }
 
-const supabase = createSupabaseServerClient(Astro);
+const pb = createPocketBaseServerClient(Astro);
 let errorMessage = '';
 
 if (Astro.request.method === 'POST') {
@@ -23,29 +23,24 @@ if (Astro.request.method === 'POST') {
   if (!name || name.trim() === '') {
     errorMessage = 'Alert name is required.';
   } else {
-    const { error } = await supabase.from('alerts').update({
-      name: name.trim(),
-      location: location ? location.trim() : null,
-      property_types,
-      tenant_types
-    }).eq('id', alertId).eq('user_id', user.id);
-
-    if (error) {
-      errorMessage = error.message;
-    } else {
+    try {
+      await pb.collection('alerts').update(alertId, {
+        name: name.trim(),
+        location: location ? location.trim() : null,
+        property_types,
+        tenant_types
+      });
       return Astro.redirect('/alerts');
+    } catch (error: any) {
+      errorMessage = error.message;
     }
   }
 }
 
-const { data: alert, error: fetchError } = await supabase
-  .from('alerts')
-  .select('*')
-  .eq('id', alertId)
-  .eq('user_id', user.id)
-  .single();
-
-if (fetchError || !alert) {
+let alert: any = null;
+try {
+  alert = await pb.collection('alerts').getOne(alertId);
+} catch (fetchError) {
   return Astro.redirect('/alerts');
 }
 

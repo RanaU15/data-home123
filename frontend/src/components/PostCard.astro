@@ -1,19 +1,13 @@
 ---
-import { getDisplayDate, type Post } from '../lib/supabase';
+import { getDisplayDate, type Post } from '../lib/pocketbase';
+import { resolvePostImages, resolvePostVideoThumbnail } from '../lib/media';
 
 interface Props {
   post: Post;
 }
 
 const { post } = Astro.props;
-let images = post.image_urls || [];
-if (images.length === 0 && post.images) {
-  let oldImages = Array.isArray(post.images) ? post.images : [];
-  if (typeof post.images === 'string') {
-    try { oldImages = JSON.parse(post.images); } catch(e) {}
-  }
-  images = oldImages.filter((img: string) => !img.includes('supabase.co'));
-}
+let images = resolvePostImages(post);
 const firstImage = images[0] || null;
 const imageCount = images.length;
 const truncatedBody = post.body ? (post.body.length > 100 ? post.body.slice(0, 100) + '...' : post.body) : 'No description available.';
@@ -25,7 +19,8 @@ if (!postRouteId) {
   postRouteId = post.id?.startsWith('http') ? encodeURIComponent(post.id) : post.id;
 }
 const hasVideo = post.has_video || false;
-const thumbnail = post.video_thumbnail || firstImage || null;
+const thumbnail = resolvePostVideoThumbnail(post) || firstImage || null;
+
 ---
 
 <article 

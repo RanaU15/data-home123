@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
-const { supabase } = require("../supabase");
+const { supabase, getPb } = require("../scraper/pocketbase"); // actually exports pb as supabase
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,37 +11,29 @@ const PORT = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/images", express.static(path.join(__dirname, "../images")));
 
-// API endpoint to fetch posts (from Supabase directly, fallback to SQLite if Supabase not configured)
+// API endpoint to fetch posts (from PocketBase directly, fallback to SQLite if not configured)
 app.get("/api/posts", async (req, res) => {
     const { search, group, date, page = 1, limit = 9 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
+    const pb = await getPb();
 
-    if (supabase) {
+    if (pb) {
         try {
-            let query = supabase.from("posts").select("*", { count: "exact" });
+            let filterParts = [];
+            if (group && group !== "All") filterParts.push(`group_name="${group}"`);
+            if (search) filterParts.push(`body~"${search}"`);
+            if (date) filterParts.push(`scraped_at~"${date}"`);
 
-            if (group && group !== "All") {
-                query = query.eq("group_name", group);
-            }
-            if (search) {
-                query = query.ilike("body", `%${search}%`);
-            }
-            if (date) {
-                query = query.ilike("scraped_at", `%${date}%`);
-            }
-
-            // Latest posts ordering
-            query = query.order("scraped_at", { ascending: false });
-            query = query.range(offset, offset + parseInt(limit) - 1);
-
-            const { data, count, error } = await query;
-
-            if (error) {
-                throw error;
-            }
+            const filterStr = filterParts.join(" && ");
+            
+            const data = await pb.collection("posts").getList(parseInt(page), parseInt(limit), {
+                filter: filterStr,
+                sort: "-scraped_at"
+            });
 
             // Also get analytics data
-            const { data: allData } = await supabase.from("posts").select("group_name, likes, comments, shares");
+            const allData = await pb.collection("posts").getFullList({ fields: "group_name, likes, comments, shares" });
+            
             let totalLikes = 0;
             let totalComments = 0;
             let totalShares = 0;
@@ -57,13 +49,13 @@ app.get("/api/posts", async (req, res) => {
             }
 
             return res.json({
-                source: "Supabase",
-                posts: data,
-                total: count || 0,
+                source: "PocketBase",
+                posts: data.items,
+                total: data.totalItems || 0,
                 page: parseInt(page),
-                totalPages: Math.ceil((count || 0) / parseInt(limit)),
+                totalPages: data.totalPages,
                 analytics: {
-                    totalPosts: allData ? allData.length : count,
+                    totalPosts: allData ? allData.length : data.totalItems,
                     totalLikes,
                     totalComments,
                     totalShares,
@@ -71,7 +63,7 @@ app.get("/api/posts", async (req, res) => {
                 }
             });
         } catch (err) {
-            console.error("Supabase query error, falling back to SQLite:", err.message);
+            console.error("PocketBase query error, falling back to SQLite:", err.message);
             // Fallback to SQLite below
         }
     }

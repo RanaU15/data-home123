@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import PocketBase from 'pocketbase';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -126,11 +126,20 @@ export default {
     const path = url.pathname;
 
     // Validate Env variables
-    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-      return errorResponse('Server Configuration Error', 500);
+    if (!env.POCKETBASE_URL) {
+      return errorResponse('Server Configuration Error: Missing POCKETBASE_URL', 500);
     }
 
-    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+    const pb = new PocketBase(env.POCKETBASE_URL);
+    pb.autoCancellation(false);
+    // Optional admin auth if needed
+    if (env.PB_ADMIN_EMAIL && env.PB_ADMIN_PASSWORD) {
+        try {
+            await pb.admins.authWithPassword(env.PB_ADMIN_EMAIL, env.PB_ADMIN_PASSWORD);
+        } catch(e) {
+            console.error("PocketBase Admin Auth failed", e);
+        }
+    }
 
     try {
       if (path === '/health') {
@@ -164,9 +173,7 @@ export default {
         const page = parseInt(url.searchParams.get('page') || '1');
         const limit = parseInt(url.searchParams.get('limit') || '20');
         const group = url.searchParams.get('group');
-        const sort = url.searchParams.get('sort') === 'asc' ? 'asc' : 'desc';
-
-        const offset = (page - 1) * limit;
+        const sort = url.searchParams.get('sort') === 'asc' ? '+scraped_at' : '-scraped_at';
 
         const postType = url.searchParams.get('post_type');
         const hasVideo = url.searchParams.get('has_video');
@@ -174,34 +181,30 @@ export default {
         const dateRangeStart = url.searchParams.get('date_start');
         const dateRangeEnd = url.searchParams.get('date_end');
 
-        let query = supabase
-          .from('posts')
-          .select('*', { count: 'exact' });
+        let filterParts = [];
+        if (group) filterParts.push(`group_name="${group.replace(/"/g, '\\"')}"`);
+        if (postType) filterParts.push(`post_type="${postType.replace(/"/g, '\\"')}"`);
+        if (hasVideo === 'true') filterParts.push(`has_video=true`);
+        if (hasVideo === 'false') filterParts.push(`has_video=false`);
+        if (author) filterParts.push(`author~"${author.replace(/"/g, '\\"')}"`);
+        if (dateRangeStart) filterParts.push(`scraped_at>="${dateRangeStart}"`);
+        if (dateRangeEnd) filterParts.push(`scraped_at<="${dateRangeEnd}"`);
 
-        if (group) query = query.eq('group_name', group);
-        if (postType) query = query.eq('post_type', postType);
-        if (hasVideo === 'true') query = query.eq('has_video', true);
-        if (hasVideo === 'false') query = query.eq('has_video', false);
-        if (author) query = query.ilike('author', `%${author}%`);
-        if (dateRangeStart) query = query.gte('post_created_at', dateRangeStart);
-        if (dateRangeEnd) query = query.lte('post_created_at', dateRangeEnd);
+        const filterStr = filterParts.join(" && ");
 
-        query = query
-          .order('scraped_at', { ascending: sort === 'asc' })
-          .range(offset, offset + limit - 1);
-
-        const { data, count, error } = await query;
-
-        if (error) throw error;
+        const data = await pb.collection('posts').getList(page, limit, {
+            filter: filterStr,
+            sort: sort
+        });
 
         return jsonResponse({
           success: true,
-          data,
+          data: data.items,
           meta: {
-            total: count,
+            total: data.totalItems,
             page,
             limit,
-            totalPages: Math.ceil(count / limit)
+            totalPages: data.totalPages
           }
         });
       }
@@ -210,20 +213,15 @@ export default {
         const id = path.split('/post/')[1];
         if (!id) return errorResponse('Missing post ID', 400);
 
-        const { data, error } = await supabase
-          .from('posts')
-          .select('*')
-          .eq('id', id)
-          .single();
-
-        if (error || !data) {
-          return errorResponse('Post not found', 404);
+        try {
+            const data = await pb.collection('posts').getOne(id);
+            return jsonResponse({
+              success: true,
+              data
+            });
+        } catch (error) {
+            return errorResponse('Post not found', 404);
         }
-
-        return jsonResponse({
-          success: true,
-          data
-        });
       }
 
       if (path === '/search') {
@@ -235,37 +233,29 @@ export default {
           return errorResponse('Missing search query parameter "q"', 400);
         }
 
-        const offset = (page - 1) * limit;
-
-        const queryStr = q.trim().split(/\s+/).join(' | ');
-        const { data, count, error } = await supabase
-          .from('posts')
-          .select('*', { count: 'exact' })
-          .textSearch('fts', queryStr, { type: 'websearch', config: 'english' })
-          .order('scraped_at', { ascending: false })
-          .range(offset, offset + limit - 1);
-
-        if (error) throw error;
+        const queryStr = q.trim().replace(/"/g, '\\"');
+        
+        const data = await pb.collection('posts').getList(page, limit, {
+            filter: `body~"${queryStr}"`,
+            sort: '-scraped_at'
+        });
 
         return jsonResponse({
           success: true,
-          data,
+          data: data.items,
           meta: {
-            total: count,
+            total: data.totalItems,
             page,
             limit,
-            totalPages: Math.ceil(count / limit)
+            totalPages: data.totalPages
           }
         });
       }
 
       if (path === '/groups') {
-        const { data, error } = await supabase
-          .from('posts')
-          .select('group_name')
-          .limit(5000);
-
-        if (error) throw error;
+        const data = await pb.collection('posts').getFullList({
+            fields: 'group_name'
+        });
 
         // Extract unique groups
         const uniqueGroups = [...new Set(data.map(item => item.group_name).filter(Boolean))];
@@ -277,33 +267,25 @@ export default {
       }
 
       if (path === '/stats') {
-        // Run aggregations in parallel
+        const todayStr = new Date(new Date().setHours(0, 0, 0, 0)).toISOString().split('T')[0] + " 00:00:00.000Z";
+        
         const [postsRes, todayRes, groupsRes, latestRes] = await Promise.all([
-          supabase.from('posts').select('*', { count: 'exact', head: true }),
-
-          supabase.from('posts')
-            .select('*', { count: 'exact', head: true })
-            .gte('scraped_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString()),
-
-          supabase.from('posts').select('group_name').limit(5000),
-
-          supabase.from('posts')
-            .select('scraped_at')
-            .order('scraped_at', { ascending: false })
-            .limit(1)
-            .single()
+          pb.collection('posts').getList(1, 1),
+          pb.collection('posts').getList(1, 1, { filter: `scraped_at>="${todayStr}"` }),
+          pb.collection('posts').getFullList({ fields: 'group_name' }),
+          pb.collection('posts').getList(1, 1, { sort: '-scraped_at', fields: 'scraped_at' })
         ]);
 
-        const total_posts = postsRes.count || 0;
-        const today_posts = todayRes.count || 0;
+        const total_posts = postsRes.totalItems || 0;
+        const today_posts = todayRes.totalItems || 0;
 
         let uniqueGroups = [];
-        if (groupsRes.data) {
-          uniqueGroups = [...new Set(groupsRes.data.map(item => item.group_name).filter(Boolean))];
+        if (groupsRes) {
+          uniqueGroups = [...new Set(groupsRes.map(item => item.group_name).filter(Boolean))];
         }
         const total_groups = uniqueGroups.length;
 
-        const latest_scrape = latestRes.data ? latestRes.data.scraped_at : null;
+        const latest_scrape = latestRes.items.length > 0 ? latestRes.items[0].scraped_at : null;
 
         return jsonResponse({
           success: true,

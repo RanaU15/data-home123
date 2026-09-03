@@ -1,7 +1,7 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { getUser } from '../../lib/auth';
-import { createSupabaseServerClient } from '../../lib/supabase';
+import { createPocketBaseServerClient } from '../../lib/pocketbase';
 
 const { user } = await getUser(Astro);
 
@@ -16,21 +16,23 @@ if (Astro.request.method === 'POST') {
 
   if (!name || name.trim() === '') {
     errorMessage = 'Alert name is required.';
-  } else {
-    const supabase = createSupabaseServerClient(Astro);
-    const { error } = await supabase.from('alerts').insert({
-      user_id: user.id,
-      name: name.trim(),
-      location: location ? location.trim() : null,
-      property_types,
-      tenant_types,
-      enabled: true
-    });
-
-    if (error) {
-      errorMessage = error.message;
-    } else {
+  } else if (user) {
+    const pb = createPocketBaseServerClient(Astro);
+    
+    try {
+      const profile = await pb.collection('profiles').getFirstListItem(`user="${user.id}"`);
+      await pb.collection('alerts').create({
+        user: profile.id,
+        user_id: user.id,
+        name: name.trim(),
+        location: location ? location.trim() : null,
+        property_types,
+        tenant_types,
+        enabled: true
+      });
       return Astro.redirect('/alerts');
+    } catch (error: any) {
+      errorMessage = error.message;
     }
   }
 }
