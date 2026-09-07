@@ -21,6 +21,9 @@ if (!postRouteId) {
 const hasVideo = post.has_video || false;
 const thumbnail = resolvePostVideoThumbnail(post) || firstImage || null;
 
+const actualSource = post.source || 'facebook';
+const actualPostType = post.post_type || 'facebook';
+
 ---
 
 <article 
@@ -28,6 +31,23 @@ const thumbnail = resolvePostVideoThumbnail(post) || firstImage || null;
   onclick={`if(!event.target.closest('a, button, [role="button"]')) window.location.href='/posts/${postRouteId}'`}
 >
   <div class="relative aspect-[4/3] w-full overflow-hidden bg-slate-100 border-b border-slate-200">
+    <div class="absolute top-2 left-2 flex gap-1.5 z-10">
+      {actualPostType === 'requirement' && (
+        <div class="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-bold text-white shadow-sm">
+          Requirement
+        </div>
+      )}
+      {actualSource === 'website' && (
+        <div class="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-bold text-white shadow-sm">
+          Website
+        </div>
+      )}
+      {actualSource === 'facebook' && (
+        <div class="rounded-md bg-[#1877F2] px-2.5 py-1 text-xs font-bold text-white shadow-sm">
+          Facebook
+        </div>
+      )}
+    </div>
     {hasVideo && thumbnail ? (
       <img 
         src={thumbnail} 
@@ -89,4 +109,5 @@ const thumbnail = resolvePostVideoThumbnail(post) || firstImage || null;
       </a>
     </div>
   </div>
+  <div class="post-source-data hidden" data-source={actualSource}></div>
 </article>

@@ -36,6 +36,8 @@ export interface Post {
   needs_permalink?: boolean;
   facebook_post_id?: string;
   facebook_video_url?: string;
+  source?: string;
+  created_by?: string;
   
   // PocketBase migration fields
   supabase_id?: string;

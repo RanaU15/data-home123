@@ -48,7 +48,19 @@ if (Astro.request.method === 'POST') {
       }
       return Astro.redirect('/');
     } catch (signUpError: any) {
-      error = signUpError.message || 'Error creating account.';
+      if (signUpError.response && signUpError.response.data) {
+        const errors = [];
+        for (const [field, errDetails] of Object.entries(signUpError.response.data)) {
+          errors.push(`${field}: ${(errDetails as any).message}`);
+        }
+        if (errors.length > 0) {
+          error = errors.join(' | ');
+        } else {
+          error = signUpError.message || 'Error creating account.';
+        }
+      } else {
+        error = signUpError.message || 'Error creating account.';
+      }
     }
   }
 }

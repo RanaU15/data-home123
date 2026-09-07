@@ -6,6 +6,10 @@ import { type Post } from '../lib/pocketbase';
 import { getAllPosts } from '../lib/data';
 import { filterPosts, type FilterState } from '../lib/filters';
 import { performHybridSearch } from '../lib/hybridSearch';
+import { getUser } from '../lib/auth';
+
+const { user } = await getUser(Astro);
+const defaultAuthorName = user?.name || user?.email?.split('@')[0] || '';
 
 const currentPage = Math.max(1, parseInt(Astro.url.searchParams.get('page') || '1', 10));
 const pageSize = 18;
@@ -16,6 +20,7 @@ const propertyTypesParam = Astro.url.searchParams.getAll('propertyTypes[]');
 const preferredTenantsParam = Astro.url.searchParams.getAll('preferredTenants[]');
 const postedByParam = Astro.url.searchParams.getAll('postedBy[]');
 const requirementsParam = Astro.url.searchParams.getAll('requirements[]');
+const sourcesParam = Astro.url.searchParams.getAll('sources[]');
 
 const filters: FilterState = {
   location: locationParam,
@@ -23,7 +28,8 @@ const filters: FilterState = {
   propertyTypes: propertyTypesParam,
   preferredTenants: preferredTenantsParam,
   postedBy: postedByParam,
-  requirements: requirementsParam
+  requirements: requirementsParam,
+  sources: sourcesParam
 };
 
 // Formulate a semantic query text out of location + propertyTypes
@@ -89,9 +95,24 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" slot="head" />
   <script is:inline src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" slot="head"></script>
 
-  <div class="mb-8 border-b border-slate-200 pb-5">
-    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Search & Filter Posts</h1>
-    <p class="mt-1 text-sm text-slate-500">Quickly find specific real estate posts by location, budget, and property type.</p>
+  <div class="mb-8 border-b border-slate-200 pb-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Search & Filter Posts</h1>
+      <p class="mt-1 text-sm text-slate-500">Quickly find specific real estate posts by location, budget, and property type.</p>
+    </div>
+    <div class="flex-shrink-0">
+      {user ? (
+        <button id="btn-open-requirement-modal" class="inline-flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+          Post Requirement
+        </button>
+      ) : (
+        <a href="/login?redirect=/search?action=post-requirement" class="inline-flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+          Post Requirement
+        </a>
+      )}
+    </div>
   </div>
 
   <div class="flex flex-col lg:flex-row gap-8">
@@ -138,6 +159,21 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
             />
           </div>
           <p class="text-[11px] text-slate-500 mt-1">Filters posts mentioning numbers &le; budget</p>
+        </div>
+
+        <!-- Source Filter -->
+        <div class="mb-5">
+          <label class="block text-sm font-semibold text-slate-700 mb-3">Source</label>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="facebook" checked={filters.sources?.includes("facebook")} class="filter-source h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">Facebook Posts</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" value="website" checked={filters.sources?.includes("website")} class="filter-source h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors" />
+              <span class="text-sm text-slate-700 group-hover:text-slate-900">Looking for flat, tenement, and require something like that</span>
+            </label>
+          </div>
         </div>
 
         <!-- Property Type Filter -->
@@ -342,6 +378,85 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
     </div>
   </div>
 
+  <!-- Toast Notification -->
+  <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2"></div>
+
+  <!-- Post Requirement Modal -->
+  <div id="requirement-modal" class="fixed inset-0 z-[100] hidden items-center justify-center">
+    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" id="requirement-modal-backdrop"></div>
+    <div class="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl m-4 transform transition-all max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="text-xl font-bold text-slate-900">Post Your Requirement</h3>
+        <button id="btn-close-requirement-modal" class="text-slate-400 hover:text-slate-600 transition-colors">
+          <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+      </div>
+      <form id="requirement-form" class="space-y-4">
+        <div>
+          <label for="req-author-name" class="block text-sm font-medium text-slate-700 mb-1">Your Name <span class="text-red-500">*</span></label>
+          <input type="text" id="req-author-name" value={defaultAuthorName} required class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm placeholder-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all" placeholder="Enter your name" />
+        </div>
+        <div>
+          <label for="req-body" class="block text-sm font-medium text-slate-700 mb-1">Requirement / Description <span class="text-red-500">*</span></label>
+          <textarea id="req-body" required rows="4" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm placeholder-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all" placeholder="Example: I want a 2 BHK for my family in Vastrapur."></textarea>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label for="req-property-type" class="block text-sm font-medium text-slate-700 mb-1">Property Type</label>
+            <select id="req-property-type" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all">
+              <option value="">Any</option>
+              <option value="1 BHK">1 BHK</option>
+              <option value="2 BHK">2 BHK</option>
+              <option value="3 BHK">3 BHK</option>
+              <option value="4 BHK">4 BHK</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label for="req-location" class="block text-sm font-medium text-slate-700 mb-1">Location</label>
+            <input type="text" id="req-location" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm placeholder-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all" placeholder="E.g., Vastrapur" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-2">Purpose / Tenant</label>
+          <div class="grid grid-cols-2 gap-3" id="req-purpose-group">
+            <label class="cursor-pointer">
+              <input type="checkbox" value="Looking for Flat" class="req-purpose-cb peer sr-only" />
+              <div class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 transition-all peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-checked:font-semibold hover:bg-slate-50 text-center shadow-sm flex items-center justify-center">Looking for Flat</div>
+            </label>
+            <label class="cursor-pointer">
+              <input type="checkbox" value="Looking for Tenant" class="req-purpose-cb peer sr-only" />
+              <div class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 transition-all peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-checked:font-semibold hover:bg-slate-50 text-center shadow-sm flex items-center justify-center">Looking for Tenant</div>
+            </label>
+            <label class="cursor-pointer">
+              <input type="checkbox" value="Family" class="req-purpose-cb peer sr-only" />
+              <div class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 transition-all peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-checked:font-semibold hover:bg-slate-50 text-center shadow-sm flex items-center justify-center">Family</div>
+            </label>
+            <label class="cursor-pointer">
+              <input type="checkbox" value="Bachelors" class="req-purpose-cb peer sr-only" />
+              <div class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 transition-all peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-checked:font-semibold hover:bg-slate-50 text-center shadow-sm flex items-center justify-center">Bachelors</div>
+            </label>
+            <label class="cursor-pointer">
+              <input type="checkbox" value="Investment" class="req-purpose-cb peer sr-only" />
+              <div class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 transition-all peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-checked:font-semibold hover:bg-slate-50 text-center shadow-sm flex items-center justify-center">Investment</div>
+            </label>
+            <label class="cursor-pointer">
+              <input type="checkbox" value="Office" class="req-purpose-cb peer sr-only" />
+              <div class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 transition-all peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-checked:font-semibold hover:bg-slate-50 text-center shadow-sm flex items-center justify-center">Office</div>
+            </label>
+          </div>
+        </div>
+        <div id="req-error-msg" class="hidden rounded-lg bg-red-50 p-3 text-sm text-red-600 border border-red-100"></div>
+        <div class="mt-6 flex justify-end gap-3 pt-2 border-t border-slate-100">
+          <button type="button" id="btn-cancel-requirement" class="rounded-xl px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors">Cancel</button>
+          <button type="submit" id="btn-submit-requirement" class="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors disabled:opacity-70 disabled:cursor-not-allowed">
+            Post Requirement
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <style is:global>
     .leaflet-popup-content-wrapper {
       border-radius: 12px;
@@ -365,6 +480,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       const inputLocation = document.getElementById("filter-location") as HTMLInputElement;
       const inputBudget = document.getElementById("filter-budget") as HTMLInputElement;
       
+      const sourceCheckboxes = Array.from(document.querySelectorAll(".filter-source")) as HTMLInputElement[];
       const typeCheckboxes = Array.from(document.querySelectorAll(".filter-type")) as HTMLInputElement[];
       const tenantCheckboxes = Array.from(document.querySelectorAll(".filter-tenant")) as HTMLInputElement[];
       const postedByCheckboxes = Array.from(document.querySelectorAll(".filter-posted-by")) as HTMLInputElement[];
@@ -384,6 +500,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
         const locQuery = inputLocation.value.toLowerCase().trim();
         const budgetValue = parseInt(inputBudget.value, 10);
         
+        const selectedSources = sourceCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
         const selectedTypes = typeCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
         const selectedTenants = tenantCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
         const selectedPostedBy = postedByCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
@@ -400,6 +517,9 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
 
         url.searchParams.delete('propertyTypes[]');
         selectedTypes.forEach(t => url.searchParams.append('propertyTypes[]', t));
+
+        url.searchParams.delete('sources[]');
+        selectedSources.forEach(t => url.searchParams.append('sources[]', t));
 
         url.searchParams.delete('preferredTenants[]');
         selectedTenants.forEach(t => url.searchParams.append('preferredTenants[]', t));
@@ -467,16 +587,16 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       if (inputLocation) inputLocation.addEventListener("input", filterPosts);
       if (inputBudget) inputBudget.addEventListener("input", filterPosts);
       
+      sourceCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
       typeCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
       tenantCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
       postedByCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
       requirementCheckboxes.forEach(cb => cb.addEventListener("change", filterPosts));
 
-
-
       function resetAllFilters() {
         if (inputLocation) inputLocation.value = "";
         if (inputBudget) inputBudget.value = "";
+        sourceCheckboxes.forEach(cb => cb.checked = false);
         typeCheckboxes.forEach(cb => cb.checked = false);
         tenantCheckboxes.forEach(cb => cb.checked = false);
         postedByCheckboxes.forEach(cb => cb.checked = false);
@@ -565,6 +685,126 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       const initialDataScript = document.getElementById('map-data');
       if (initialDataScript) {
         window.initOrUpdateMap(JSON.parse(initialDataScript.textContent || '[]'));
+      }
+
+      // ----------------------------------------------------
+      // Post Requirement Modal Logic
+      // ----------------------------------------------------
+      const btnOpenReq = document.getElementById('btn-open-requirement-modal');
+      const modalReq = document.getElementById('requirement-modal');
+      const btnCloseReq = document.getElementById('btn-close-requirement-modal');
+      const btnCancelReq = document.getElementById('btn-cancel-requirement');
+      const formReq = document.getElementById('requirement-form');
+      const backdropReq = document.getElementById('requirement-modal-backdrop');
+      const reqErrorMsg = document.getElementById('req-error-msg');
+      const btnSubmitReq = document.getElementById('btn-submit-requirement') as HTMLButtonElement;
+
+      function showToast(message: string, isError = false) {
+        const container = document.getElementById('toast-container');
+        if (!container) return;
+        const toast = document.createElement('div');
+        toast.className = `px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white transform transition-all translate-y-full opacity-0 flex items-center gap-2 ${isError ? 'bg-red-600' : 'bg-slate-900'}`;
+        toast.innerHTML = isError ? 
+          `<svg class="h-5 w-5 text-red-200" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>${message}` : 
+          `<svg class="h-5 w-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>${message}`;
+        container.appendChild(toast);
+        
+        requestAnimationFrame(() => toast.classList.remove('translate-y-full', 'opacity-0'));
+        setTimeout(() => {
+          toast.classList.add('translate-y-full', 'opacity-0');
+          setTimeout(() => toast.remove(), 300);
+        }, 3000);
+      }
+
+      function openRequirementModal() {
+        if (modalReq) {
+          modalReq.classList.remove('hidden');
+          modalReq.classList.add('flex');
+          setTimeout(() => modalReq.querySelector('.transform')?.classList.add('scale-100'), 10);
+        }
+      }
+
+      function closeRequirementModal() {
+        if (modalReq) {
+          modalReq.classList.add('hidden');
+          modalReq.classList.remove('flex');
+          if (formReq) (formReq as HTMLFormElement).reset();
+          if (reqErrorMsg) reqErrorMsg.classList.add('hidden');
+        }
+      }
+
+      if (btnOpenReq) btnOpenReq.addEventListener('click', openRequirementModal);
+      if (btnCloseReq) btnCloseReq.addEventListener('click', closeRequirementModal);
+      if (btnCancelReq) btnCancelReq.addEventListener('click', closeRequirementModal);
+      if (backdropReq) backdropReq.addEventListener('click', closeRequirementModal);
+
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('action') === 'post-requirement') {
+        if (document.body.getAttribute('data-user-id')) {
+          openRequirementModal();
+          urlParams.delete('action');
+          const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+          window.history.replaceState({}, document.title, newUrl);
+        }
+      }
+
+      if (formReq) {
+        formReq.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const bodyEl = document.getElementById('req-body') as HTMLTextAreaElement;
+          const propTypeEl = document.getElementById('req-property-type') as HTMLSelectElement;
+          const locEl = document.getElementById('req-location') as HTMLInputElement;
+          const purposeCbs = document.querySelectorAll('.req-purpose-cb:checked');
+          const preferred_tenant = Array.from(purposeCbs).map(cb => (cb as HTMLInputElement).value).join(', ');
+          const authorNameEl = document.getElementById('req-author-name') as HTMLInputElement;
+          
+          const body = bodyEl?.value.trim();
+          if (!body) {
+            if (reqErrorMsg) {
+              reqErrorMsg.textContent = "Please enter your requirement.";
+              reqErrorMsg.classList.remove('hidden');
+            }
+            return;
+          }
+
+          if (btnSubmitReq) {
+            btnSubmitReq.disabled = true;
+            btnSubmitReq.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Posting...`;
+          }
+          if (reqErrorMsg) reqErrorMsg.classList.add('hidden');
+
+          try {
+            const res = await fetch('/api/requirements', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                body,
+                property_type: propTypeEl?.value || '',
+                location: locEl?.value || '',
+                preferred_tenant,
+                author_name: authorNameEl?.value || ''
+              })
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to post requirement');
+
+            closeRequirementModal();
+            showToast("Requirement posted successfully.");
+            filterPosts();
+            
+          } catch (err: any) {
+            if (reqErrorMsg) {
+              reqErrorMsg.textContent = err.message || "Failed to post requirement. Please try again.";
+              reqErrorMsg.classList.remove('hidden');
+            }
+          } finally {
+            if (btnSubmitReq) {
+              btnSubmitReq.disabled = false;
+              btnSubmitReq.innerHTML = 'Post Requirement';
+            }
+          }
+        });
       }
     });
   </script>

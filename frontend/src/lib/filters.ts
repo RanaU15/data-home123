@@ -12,6 +12,7 @@ export interface FilterState {
   preferredTenants?: string[];
   requirements?: string[];
   postedBy?: string[];
+  sources?: string[];
   globalQuery?: string; // Keep this just in case, but we parse it out
 }
 
@@ -102,7 +103,21 @@ export function matchesPost(postObj: any, filters: FilterState, strictLocation: 
     });
   }
 
-  return matchesLocation && matchesBudget && matchesType && matchesTenant && matchesRequirement && matchesPostedBy;
+  // --- 7. Source Filter ---
+  let matchesSource = true;
+  const selectedSources = filters.sources || [];
+  if (selectedSources.length > 0) {
+    const isWebsite = postObj.source === 'website' || postObj.post_type === 'requirement';
+    const isFacebook = postObj.source === 'facebook' || postObj.post_type === 'facebook' || !postObj.source; // Default to facebook if empty
+
+    matchesSource = selectedSources.some(src => {
+      if (src === 'website') return isWebsite;
+      if (src === 'facebook') return isFacebook;
+      return false;
+    });
+  }
+
+  return matchesLocation && matchesBudget && matchesType && matchesTenant && matchesRequirement && matchesPostedBy && matchesSource;
 }
 
 export function filterPosts(posts: any[], filters: FilterState, strictLocation: boolean = true): any[] {
