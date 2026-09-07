@@ -21,8 +21,8 @@ if (Astro.request.method === 'POST') {
       
   if (notificationId) {
     try {
-      const current = await pb.collection('notifications').getOne(notificationId, { expand: 'user' }).catch(() => null);
-      if (current && user && current.expand?.user?.user === user.id) {
+      const current = await pb.collection('notifications').getOne(notificationId).catch(() => null);
+      if (current && profileId && current.user === profileId) {
         if (action === 'mark_read') {
           await pb.collection('notifications').update(notificationId, { is_read: true }).catch(() => {});
         } else if (action === 'delete') {
@@ -32,26 +32,32 @@ if (Astro.request.method === 'POST') {
     } catch (e) {}
   } else if (action === 'mark_all_read') {
     try {
-      if (user) {
-        await pb.collection('notifications').getFullList({
-          filter: `user.user="${user.id}" && is_read=false`
-        }).then(async (unread) => {
-          for (const n of unread) {
-            await pb.collection('notifications').update(n.id, { is_read: true }).catch(() => {});
-          }
-        }).catch(() => {});
+      if (profileId) {
+        const unread = await pb.collection('notifications').getFullList({
+          filter: `user="${profileId}" && is_read=false`,
+          fields: 'id'
+        }).catch(() => []);
+        
+        const batchSize = 10;
+        for (let i = 0; i < unread.length; i += batchSize) {
+          const batch = unread.slice(i, i + batchSize);
+          await Promise.all(batch.map(n => pb.collection('notifications').update(n.id, { is_read: true }).catch(() => {})));
+        }
       }
     } catch (e) {}
   } else if (action === 'delete_all') {
     try {
-      if (user) {
-        await pb.collection('notifications').getFullList({
-          filter: `user.user="${user.id}"`
-        }).then(async (allNotifs) => {
-          for (const n of allNotifs) {
-            await pb.collection('notifications').delete(n.id).catch(() => {});
-          }
-        }).catch(() => {});
+      if (profileId) {
+        const allNotifs = await pb.collection('notifications').getFullList({
+          filter: `user="${profileId}"`,
+          fields: 'id'
+        }).catch(() => []);
+        
+        const batchSize = 10;
+        for (let i = 0; i < allNotifs.length; i += batchSize) {
+          const batch = allNotifs.slice(i, i + batchSize);
+          await Promise.all(batch.map(n => pb.collection('notifications').delete(n.id).catch(() => {})));
+        }
       }
     } catch (e) {}
   }
