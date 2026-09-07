@@ -69,7 +69,7 @@ const hasPosts = posts && posts.length > 0;
   </div>
 
   <!-- Skeleton Loader (Shown while page/scripts initialize or if data is loading) -->
-  <div id="skeleton-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 hidden">
+  <div id="skeleton-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 hidden">
     <SkeletonCard />
     <SkeletonCard />
     <SkeletonCard />
@@ -84,7 +84,7 @@ const hasPosts = posts && posts.length > 0;
   <div id="posts-container">
     {hasPosts ? (
       <div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" id="results-grid">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" id="results-grid">
           {posts.map((post: Post) => (
             <div class="post-wrapper h-full" data-body={[post.body, post.author, post.group_name, post.location, post.property_type, post.preferred_tenant, post.requirement, post.post_type].filter(Boolean).join(" ").toLowerCase()}>
               <PostCard post={post} />

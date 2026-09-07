@@ -241,7 +241,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
       <script is:inline id="map-data" type="application/json" set:html={JSON.stringify(areaStats)}></script>
 
       <!-- Skeleton Loader (Shown during search/filtering transitions) -->
-      <div id="search-skeleton" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 hidden">
+      <div id="search-skeleton" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 hidden">
         <SkeletonCard />
         <SkeletonCard />
         <SkeletonCard />
@@ -252,7 +252,7 @@ const areaStats = AHMEDABAD_AREAS.map(area => {
 
       <!-- Search Results Container -->
       <div id="results-container">
-        <div id="results-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        <div id="results-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {pagePosts.map((post: Post) => (
             <div 
               class="post-filter-wrapper h-full" 
