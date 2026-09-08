@@ -57,7 +57,7 @@ if (user) {
 		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 		<slot name="head" />
 	</head>
-	<body class="flex min-h-full flex-col font-['Inter']" data-user-id={user?.id || ''}>
+	<body class="flex min-h-full flex-col font-['Inter']" data-user-id={user?.id || ''} data-user-profile-id={user?.profileId || ''}>
 		<header class="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur-sm">
 			<div class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
 				<a href="/" id="nav-logo" class="flex items-center gap-2 font-bold text-slate-900 text-lg tracking-tight">

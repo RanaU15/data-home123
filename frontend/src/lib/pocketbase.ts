@@ -26,6 +26,7 @@ export interface Post {
   video_duration?: string;
   video_count?: number;
   has_video?: boolean;
+  contact_number?: string;
   post_type?: string;
   location?: string;
   property_type?: string;

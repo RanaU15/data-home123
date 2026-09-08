@@ -9,8 +9,11 @@ export function resolvePostImages(post: Post | null): string[] {
   if (!post) return [];
 
   // If there are migrated PocketBase files
-  if (post.migrated_images && Array.isArray(post.migrated_images) && post.migrated_images.length > 0) {
-    return post.migrated_images.map(filename => getPocketBaseMediaUrl(post.collectionName || 'posts', post.id, filename));
+  if (post.migrated_images) {
+    const migrated = Array.isArray(post.migrated_images) ? post.migrated_images : [post.migrated_images];
+    if (migrated.length > 0 && typeof migrated[0] === 'string' && migrated[0] !== '') {
+      return migrated.map(filename => getPocketBaseMediaUrl(post.collectionName || 'posts', post.id, filename));
+    }
   }
 
   // Fallback to original image_urls (which may be Supabase URLs or Facebook CDNs)
