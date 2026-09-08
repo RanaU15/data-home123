@@ -86,6 +86,31 @@ const registerUrl = redirectParam ? `/register?redirect=${encodeURIComponent(red
         </button>
       </form>
 
+      <div class="my-6 flex items-center gap-3 text-xs text-slate-400">
+        <span class="h-px flex-1 bg-slate-200"></span>
+        <span>OR</span>
+        <span class="h-px flex-1 bg-slate-200"></span>
+      </div>
+
+      <div class="space-y-3">
+        <button type="button" id="google-login-btn" class="flex w-full items-center justify-center gap-3 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:cursor-not-allowed disabled:opacity-60">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="#4285F4" d="M21.35 12.23c0-.79-.07-1.55-.23-2.23H12v4.22h5.24a4.48 4.48 0 01-1.94 2.94v2.45h3.14c1.84-1.69 2.91-4.18 2.91-7.38z" />
+            <path fill="#34A853" d="M12 21.99c2.63 0 4.84-.87 6.45-2.38l-3.14-2.45c-.87.58-1.98.92-3.31.92-2.54 0-4.69-1.72-5.46-4.03H3.29v2.53A9.74 9.74 0 0012 21.99z" />
+            <path fill="#FBBC05" d="M6.54 14.05A5.85 5.85 0 016.23 12c0-.71.12-1.4.31-2.05V7.42H3.29A9.98 9.98 0 002 12c0 1.66.4 3.23 1.29 4.58l3.25-2.53z" />
+            <path fill="#EA4335" d="M12 5.92c1.43 0 2.72.49 3.73 1.45l2.8-2.8C16.83 2.96 14.63 2 12 2a9.74 9.74 0 00-8.71 5.42l3.25 2.53C7.31 7.64 9.46 5.92 12 5.92z" />
+          </svg>
+          <span>Continue with Google</span>
+        </button>
+        <button type="button" id="facebook-login-btn" class="flex w-full items-center justify-center gap-3 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:cursor-not-allowed disabled:opacity-60">
+          <svg class="h-5 w-5 rounded-full" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="12" fill="#1877F2" />
+            <path fill="#fff" d="M13.5 20v-7h2.33l.35-2.72H13.5V8.54c0-.79.22-1.33 1.36-1.33h1.45V4.78c-.25-.03-1.1-.11-2.1-.11-2.08 0-3.5 1.27-3.5 3.6v2.01H8.36V13h2.35v7h2.79z" />
+          </svg>
+          <span>Continue with Facebook</span>
+        </button>
+      </div>
+
       <div class="mt-6 text-center text-sm text-slate-600">
         Don't have an account? <a href={registerUrl} class="font-medium text-blue-600 hover:text-blue-500">Register</a>
       </div>
@@ -93,6 +118,56 @@ const registerUrl = redirectParam ? `/register?redirect=${encodeURIComponent(red
   </div>
 
   <script>
+    import { loginWithFacebook, loginWithGoogle } from '../lib/auth';
+    import { pb } from '../lib/pocketbase';
+
+    const redirectUrl = new URLSearchParams(window.location.search).get('redirect') || '/';
+    const googleLoginButton = document.getElementById('google-login-btn') as HTMLButtonElement | null;
+    const facebookLoginButton = document.getElementById('facebook-login-btn') as HTMLButtonElement | null;
+
+    function savePocketBaseSessionAndRedirect() {
+      if (!pb.authStore.isValid || !pb.authStore.record) {
+        throw new Error('PocketBase did not return a valid authenticated user.');
+      }
+
+      document.cookie = pb.authStore.exportToCookie({
+        httpOnly: false,
+        secure: window.location.protocol === 'https:',
+        sameSite: 'lax',
+        path: '/'
+      });
+      window.location.assign(redirectUrl);
+    }
+
+    async function handleOAuthLogin(button: HTMLButtonElement | null, login: () => Promise<unknown>) {
+      if (!button || button.disabled) return;
+      const originalText = button.innerHTML;
+      button.disabled = true;
+      button.innerHTML = '<span class="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700"></span><span>Signing in...</span>';
+
+      try {
+        await login();
+        savePocketBaseSessionAndRedirect();
+      } catch (oauthError: any) {
+        console.error('OAuth login failed', oauthError, oauthError?.originalError);
+        const message = oauthError?.originalError?.message || oauthError?.message || 'OAuth login failed. Please try again.';
+        const errorBox = document.createElement('div');
+        errorBox.className = 'mb-4 rounded-md bg-red-50 p-4 text-sm text-red-700';
+        const providerNotConfigured = /provider|oauth2|auth methods|not enabled|not configured/i.test(message);
+        errorBox.textContent = message.includes('popup') || message.includes('cancel')
+          ? 'Login was cancelled. Please try again.'
+          : providerNotConfigured
+            ? 'This login provider is not enabled in PocketBase yet. Please configure OAuth2 and try again.'
+          : 'Unable to sign in with this provider. Check the provider configuration and try again.';
+        button.closest('.space-y-3')?.before(errorBox);
+        button.disabled = false;
+        button.innerHTML = originalText;
+      }
+    }
+
+    googleLoginButton?.addEventListener('click', () => handleOAuthLogin(googleLoginButton, loginWithGoogle));
+    facebookLoginButton?.addEventListener('click', () => handleOAuthLogin(facebookLoginButton, loginWithFacebook));
+
     const togglePassword = document.getElementById('togglePassword');
     const password = document.getElementById('password');
     const passwordInput = document.getElementById('password') as HTMLInputElement | null;

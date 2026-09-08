@@ -1,5 +1,24 @@
-import { createPocketBaseServerClient, updatePocketBaseCookie } from './pocketbase';
+import { createPocketBaseServerClient, pb, updatePocketBaseCookie } from './pocketbase';
 import type { AstroGlobal } from 'astro';
+
+export async function loginWithGoogle() {
+  return loginWithOAuthProvider('google');
+}
+
+export async function loginWithFacebook() {
+  return pb.collection('users').authWithOAuth2({
+    provider: 'facebook',
+    scopes: ['public_profile']
+  });
+}
+
+async function loginWithOAuthProvider(provider: 'google' | 'facebook') {
+  const authData = await pb.collection('users').authWithOAuth2({ provider });
+  if (!pb.authStore.isValid || !pb.authStore.record) {
+    throw new Error('OAuth login did not return a valid PocketBase session.');
+  }
+  return authData;
+}
 
 export const getUser = async (context: { cookies: AstroGlobal['cookies'], request: Request }) => {
   const pb = createPocketBaseServerClient(context);
@@ -15,8 +34,22 @@ export const getUser = async (context: { cookies: AstroGlobal['cookies'], reques
         try {
           const profile = await pb.collection('profiles').getFirstListItem(`user="${user.id}"`);
           profileId = profile.id;
-        } catch (e) {
-          // Profile might not exist yet
+        } catch (e: any) {
+          if (e?.status !== 404) {
+            console.error('Failed to load profile for authenticated user', e);
+          } else {
+            try {
+              const profile = await pb.collection('profiles').create({
+                user: user.id,
+                full_name: user.name || user.email || 'User',
+                email: user.email || '',
+                is_logged_in: true
+              });
+              profileId = profile.id;
+            } catch (profileError) {
+              console.error('Failed to create profile for authenticated user', profileError);
+            }
+          }
         }
       }
       return { user: { ...user, profileId }, error: null };
